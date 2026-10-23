@@ -416,50 +416,178 @@ class _ReceiptViewerScreen extends StatefulWidget {
   State<_ReceiptViewerScreen> createState() => _ReceiptViewerScreenState();
 }
 
-class _ReceiptViewerScreenState extends State<_ReceiptViewerScreen> {
+class _ReceiptViewerScreenState extends State<_ReceiptViewerScreen>
+    with SingleTickerProviderStateMixin {
   late final PageController _pageController;
   late int _currentIndex;
+
+  late final TransformationController _transformationController;
+  late final AnimationController _animationController;
+  Animation<Matrix4>? _animation;
+
+  bool _isZoomed = false;
 
   @override
   void initState() {
     super.initState();
+
     _currentIndex = widget.initialIndex;
+
     _pageController = PageController(initialPage: widget.initialIndex);
+
+    _transformationController = TransformationController();
+
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    )..addListener(() {
+      if (_animation != null) {
+        _transformationController.value = _animation!.value;
+      }
+    });
   }
 
   @override
   void dispose() {
     _pageController.dispose();
+    _transformationController.dispose();
+    _animationController.dispose();
     super.dispose();
+  }
+
+  void _resetZoom() {
+    _animationController.stop();
+    _animation = Matrix4Tween(
+      begin: _transformationController.value,
+      end: Matrix4.identity(),
+    ).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
+    );
+
+    _animationController.forward(from: 0);
+
+    setState(() {
+      _isZoomed = false;
+    });
+  }
+
+  void _zoomIn(Offset localPosition) {
+    _animationController.stop();
+
+    final current = _transformationController.value;
+    final currentScale = current.getMaxScaleOnAxis();
+
+    if (currentScale > 1.05) {
+      _resetZoom();
+      return;
+    }
+
+    const targetScale = 2.5;
+
+    final zoomMatrix =
+        Matrix4.identity()
+          ..translate(
+            localPosition.dx * (1 - targetScale),
+            localPosition.dy * (1 - targetScale),
+          )
+          ..scale(targetScale);
+
+    _animation = Matrix4Tween(begin: current, end: zoomMatrix).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
+    );
+
+    _animationController.forward(from: 0);
+
+    setState(() {
+      _isZoomed = true;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Token ${_currentIndex + 1}/${widget.files.length}'),
+        title: Text('Receipt ${_currentIndex + 1}/${widget.files.length}'),
+        actions: [
+          IconButton(
+            tooltip: _isZoomed ? 'Zoom out' : 'Zoom in',
+            icon: Icon(_isZoomed ? Icons.zoom_out : Icons.zoom_in),
+            onPressed: () {
+              if (_isZoomed) {
+                _resetZoom();
+              } else {
+                final size = MediaQuery.sizeOf(context);
+                _zoomIn(Offset(size.width / 2, size.height / 2));
+              }
+            },
+          ),
+        ],
       ),
       body: PageView.builder(
         controller: _pageController,
         itemCount: widget.files.length,
+        physics:
+            _isZoomed
+                ? const NeverScrollableScrollPhysics()
+                : const PageScrollPhysics(),
         onPageChanged: (index) {
-          setState(() => _currentIndex = index);
+          _transformationController.value = Matrix4.identity();
+
+          setState(() {
+            _currentIndex = index;
+            _isZoomed = false;
+          });
         },
         itemBuilder: (context, index) {
-          return Center(
-            child: InteractiveViewer(
-              minScale: 1.0,
-              maxScale: 5.0,
-              panEnabled: true,
-              scaleEnabled: true,
-              constrained: false,
-              child: Image.file(
-                widget.files[index],
-                fit: BoxFit.contain,
-                errorBuilder:
-                    (_, _, _) => const Icon(Icons.broken_image, size: 60),
-              ),
-            ),
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              return Center(
+                child: GestureDetector(
+                  onDoubleTapDown: (details) {
+                    _doubleTapPosition = details.localPosition;
+                  },
+                  onDoubleTap: () {
+                    if (_isZoomed) {
+                      _resetZoom();
+                    } else {
+                      _zoomIn(_doubleTapPosition);
+                    }
+                  },
+                  child: InteractiveViewer(
+                    transformationController: _transformationController,
+                    minScale: 1.0,
+                    maxScale: 5.0,
+                    panEnabled: true,
+                    scaleEnabled: true,
+                    onInteractionEnd: (_) {
+                      final scale =
+                          _transformationController.value.getMaxScaleOnAxis();
+
+                      if (scale <= 1.05 && _isZoomed) {
+                        setState(() {
+                          _isZoomed = false;
+                        });
+                      } else if (scale > 1.05 && !_isZoomed) {
+                        setState(() {
+                          _isZoomed = true;
+                        });
+                      }
+                    },
+                    child: SizedBox(
+                      width: constraints.maxWidth,
+                      height: constraints.maxHeight,
+                      child: Image.file(
+                        widget.files[index],
+                        fit: BoxFit.contain,
+                        errorBuilder:
+                            (_, _, _) =>
+                                const Icon(Icons.broken_image, size: 60),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
           );
         },
       ),
@@ -472,7 +600,7 @@ class _ReceiptViewerScreenState extends State<_ReceiptViewerScreen> {
             child: ElevatedButton.icon(
               onPressed: () => widget.onShare(widget.files[_currentIndex]),
               icon: const Icon(Icons.share),
-              label: const Text('Share'),
+              label: const Text('Share to WhatsApp'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF25D366),
                 foregroundColor: Colors.white,
@@ -483,4 +611,6 @@ class _ReceiptViewerScreenState extends State<_ReceiptViewerScreen> {
       ),
     );
   }
+
+  Offset _doubleTapPosition = Offset.zero;
 }
