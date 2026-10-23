@@ -103,6 +103,11 @@ class _FirstScreenState extends State<FirstScreen> {
     }
   }
 
+  void hideKeyboard() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    SystemChannels.textInput.invokeMethod('TextInput.hide');
+  }
+
   // ================= SPACE NAVIGATION =================
 
   bool isValidCompletedNumber(String value) {
@@ -368,12 +373,18 @@ class _FirstScreenState extends State<FirstScreen> {
 
       if (!mounted) return;
 
-      Navigator.push(
+      hideKeyboard();
+
+      await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => SavedReceiptsScreen(receipts: receipts),
         ),
       );
+
+      if (!mounted) return;
+
+      hideKeyboard();
     } catch (e) {
       if (!mounted) return;
 
@@ -756,6 +767,8 @@ class _FirstScreenState extends State<FirstScreen> {
       }
     }
 
+    hideKeyboard();
+
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -766,7 +779,11 @@ class _FirstScreenState extends State<FirstScreen> {
               isTRMode: isTRMode,
             ),
       ),
-    );
+    ).then((_) {
+      if (!mounted) return;
+
+      hideKeyboard();
+    });
   }
 
   // ================= UI =================

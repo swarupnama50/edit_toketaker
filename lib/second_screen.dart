@@ -223,11 +223,16 @@ class _SecondScreenState extends State<SecondScreen> {
 
   // DATE AND TIME
 
+  // DATE AND TIME — 12-hour format
+
   String formatDateTime(DateTime dt) {
     String two(int n) => n.toString().padLeft(2, '0');
 
+    final hour12 = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final period = dt.hour >= 12 ? 'PM' : 'AM';
+
     return '${two(dt.day)}/${two(dt.month)}/${dt.year} '
-        '${two(dt.hour)}:${two(dt.minute)}:${two(dt.second)}';
+        '${two(hour12)}:${two(dt.minute)}:${two(dt.second)} $period';
   }
 
   // BORDERLESS TABLE HEADER
