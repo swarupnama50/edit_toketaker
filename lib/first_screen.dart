@@ -39,35 +39,57 @@ class _FirstScreenState extends State<FirstScreen> {
     int rowIndex,
     String fieldType,
   ) {
-    // If the current box contains text, let Backspace delete normally.
     if (controller.text.isNotEmpty) return;
 
-    TextEditingController? previousController;
     FocusNode? previousFocus;
+    TextEditingController? previousController;
 
     if (fieldType == 'num') {
-      // Num -> previous row's amount box.
-      if (rowIndex == 0) return;
+      // Num -> previous row's amount box, skipping blank rows.
+      for (int i = rowIndex - 1; i >= 0; i--) {
+        if (!isFirstFilled(i)) continue;
 
-      if (isTRMode) {
-        previousController = srControllers[rowIndex - 1];
-        previousFocus = srFocusNodes[rowIndex - 1];
-      } else {
-        previousController = srControllers[rowIndex - 1];
-        previousFocus = srFocusNodes[rowIndex - 1];
+        if (isTRMode) {
+          if (srControllers[i].text.trim().isNotEmpty) {
+            previousController = srControllers[i];
+            previousFocus = srFocusNodes[i];
+            break;
+          }
+        } else {
+          if (srControllers[i].text.trim().isNotEmpty) {
+            previousController = srControllers[i];
+            previousFocus = srFocusNodes[i];
+            break;
+          }
+
+          if (frControllers[i].text.trim().isNotEmpty) {
+            previousController = frControllers[i];
+            previousFocus = frFocusNodes[i];
+            break;
+          }
+        }
+
+        previousController = numControllers[i];
+        previousFocus = numFocusNodes[i];
+        break;
       }
     } else if (fieldType == 'sr') {
       if (isTRMode) {
-        // TR amount -> its OWN Num box.
+        // TR -> same row's Num.
         previousController = numControllers[rowIndex];
         previousFocus = numFocusNodes[rowIndex];
       } else {
-        // SR -> same row's FR box.
-        previousController = frControllers[rowIndex];
-        previousFocus = frFocusNodes[rowIndex];
+        // SR -> FR if filled; otherwise Num.
+        if (frControllers[rowIndex].text.trim().isNotEmpty) {
+          previousController = frControllers[rowIndex];
+          previousFocus = frFocusNodes[rowIndex];
+        } else {
+          previousController = numControllers[rowIndex];
+          previousFocus = numFocusNodes[rowIndex];
+        }
       }
     } else if (fieldType == 'fr') {
-      // FR -> same row's Num box.
+      // FR -> same row's Num.
       previousController = numControllers[rowIndex];
       previousFocus = numFocusNodes[rowIndex];
     }
@@ -137,18 +159,35 @@ class _FirstScreenState extends State<FirstScreen> {
   }
 
   void moveToNextAmount(int rowIndex, String fieldType) {
-    final nextIndex = rowIndex + 1;
+    final sortedIndexes = getSortedRowIndexes();
+    final position = sortedIndexes.indexOf(rowIndex);
 
-    // Do not move if the next row does not exist.
-    if (nextIndex >= numControllers.length) return;
+    for (int i = position + 1; i < sortedIndexes.length; i++) {
+      final nextIndex = sortedIndexes[i];
 
-    // Do not move into an amount box if its Num box is blank.
-    if (numControllers[nextIndex].text.trim().isEmpty) return;
+      if (fieldType == 'num') {
+        FocusScope.of(context).requestFocus(numFocusNodes[nextIndex]);
+        return;
+      }
 
-    final nextFocus =
-        fieldType == 'fr' ? frFocusNodes[nextIndex] : srFocusNodes[nextIndex];
+      if (fieldType == 'fr') {
+        if (!isTRMode && isFirstFilled(nextIndex)) {
+          FocusScope.of(context).requestFocus(frFocusNodes[nextIndex]);
+        } else {
+          FocusScope.of(context).requestFocus(numFocusNodes[nextIndex]);
+        }
+        return;
+      }
 
-    FocusScope.of(context).requestFocus(nextFocus);
+      if (fieldType == 'sr' || fieldType == 'tr') {
+        if (isFirstFilled(nextIndex)) {
+          FocusScope.of(context).requestFocus(srFocusNodes[nextIndex]);
+        } else {
+          FocusScope.of(context).requestFocus(numFocusNodes[nextIndex]);
+        }
+        return;
+      }
+    }
   }
 
   void checkDuplicateNumber(String value, int currentIndex) {
@@ -810,7 +849,7 @@ class _FirstScreenState extends State<FirstScreen> {
                     if (!isValidCompletedNumber(value)) return;
 
                     checkDuplicateNumber(value, index);
-                    moveToNextNum(index);
+                    moveToNextAmount(index, 'num');
                   },
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
@@ -889,7 +928,7 @@ class _FirstScreenState extends State<FirstScreen> {
                     }
                   },
                   onSubmitted: (_) {
-                    moveToNextAmount(index, 'sr');
+                    moveToNextAmount(index, isTRMode ? 'tr' : 'sr');
                   },
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
