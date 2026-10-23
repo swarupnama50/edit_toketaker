@@ -136,6 +136,21 @@ class _FirstScreenState extends State<FirstScreen> {
     }
   }
 
+  void moveToNextAmount(int rowIndex, String fieldType) {
+    final nextIndex = rowIndex + 1;
+
+    // Do not move if the next row does not exist.
+    if (nextIndex >= numControllers.length) return;
+
+    // Do not move into an amount box if its Num box is blank.
+    if (numControllers[nextIndex].text.trim().isEmpty) return;
+
+    final nextFocus =
+        fieldType == 'fr' ? frFocusNodes[nextIndex] : srFocusNodes[nextIndex];
+
+    FocusScope.of(context).requestFocus(nextFocus);
+  }
+
   void checkDuplicateNumber(String value, int currentIndex) {
     value = value.trim().toUpperCase();
 
@@ -792,11 +807,10 @@ class _FirstScreenState extends State<FirstScreen> {
                     final value =
                         numControllers[index].text.trim().toUpperCase();
 
-                    checkDuplicateNumber(value, index);
+                    if (!isValidCompletedNumber(value)) return;
 
-                    if (isValidCompletedNumber(value)) {
-                      moveToNextNum(index);
-                    }
+                    checkDuplicateNumber(value, index);
+                    moveToNextNum(index);
                   },
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
@@ -838,7 +852,7 @@ class _FirstScreenState extends State<FirstScreen> {
                       }
                     },
                     onSubmitted: (_) {
-                      FocusScope.of(context).requestFocus(srFocusNodes[index]);
+                      moveToNextAmount(index, 'fr');
                     },
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
@@ -874,7 +888,9 @@ class _FirstScreenState extends State<FirstScreen> {
                       );
                     }
                   },
-                  onSubmitted: (_) => moveToNextNum(index),
+                  onSubmitted: (_) {
+                    moveToNextAmount(index, 'sr');
+                  },
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
                     prefixText: '₹ ',
