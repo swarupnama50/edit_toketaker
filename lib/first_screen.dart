@@ -95,6 +95,112 @@ class _FirstScreenState extends State<FirstScreen> {
     }
   }
 
+  //===================Paste=========================
+
+  Future<void> pasteTokenData() async {
+    final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = clipboardData?.text;
+
+    if (text == null || text.trim().isEmpty) return;
+
+    final parsedRows = <Map<String, String>>[];
+
+    final numPattern = RegExp(
+      r'^(?:\d{2}|\d[HE]|\d{2}V|AP|HP)$',
+      caseSensitive: false,
+    );
+
+    for (final line in text.split(RegExp(r'\r?\n'))) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+
+      // Ignore totals and descriptive lines.
+      if (RegExp(
+        r'^(?:total|grand\s+total)\b',
+        caseSensitive: false,
+      ).hasMatch(trimmed)) {
+        continue;
+      }
+
+      // Extract Num, optional suffix, and the remaining text.
+      final match = RegExp(
+        r'^\s*(AP|HP|\d{2}V|\d[HE]|\d{2}|\d)([A-Za-z]*?)\s*(.*?)\s*$',
+        caseSensitive: false,
+      ).firstMatch(trimmed);
+
+      if (match == null) continue;
+
+      var num = match.group(1)!.toUpperCase();
+      final suffix = match.group(2)!.toUpperCase();
+      final remainder = match.group(3)!;
+
+      // Convert 4ending to 4E and 5house to 5H.
+      if (RegExp(r'^\d$').hasMatch(num) && suffix.isNotEmpty) {
+        if (suffix.startsWith('E') || suffix.startsWith('H')) {
+          num += suffix[0];
+        } else {
+          continue;
+        }
+      } else if (suffix.isNotEmpty) {
+        continue;
+      }
+
+      if (!numPattern.hasMatch(num)) continue;
+
+      // Extract amounts after Num.
+      // Supports formats like:
+      // 75 - 10 - 20
+      // 14=20fr
+      // AP==20
+      // 4E -10
+      // 45 20
+      final amountTexts =
+          RegExp(
+            r'\d{1,5}',
+          ).allMatches(remainder).map((m) => m.group(0)!).where((value) {
+            final amount = int.tryParse(value);
+            return amount != null && amount >= 1 && amount <= 15000;
+          }).toList();
+
+      var fr = '';
+      var sr = '';
+
+      if (amountTexts.isNotEmpty) {
+        if (isTRMode) {
+          // TR mode: use the last amount when multiple amounts exist.
+          sr = amountTexts.length >= 2 ? amountTexts.last : amountTexts.first;
+        } else {
+          fr = amountTexts.first;
+
+          // If three values exist, use the third as SR.
+          if (amountTexts.length >= 3) {
+            sr = amountTexts[2];
+          } else if (amountTexts.length == 2) {
+            sr = amountTexts[1];
+          }
+        }
+      }
+
+      parsedRows.add({'num': num, 'fr': fr, 'sr': sr});
+
+      if (parsedRows.length >= 200) break;
+    }
+
+    if (parsedRows.isEmpty) return;
+
+    if (!mounted) return;
+
+    setState(() {
+      for (int i = 0; i < parsedRows.length && i < numControllers.length; i++) {
+        final row = parsedRows[i];
+
+        numControllers[i].text = row['num'] ?? '';
+        frControllers[i].text = isTRMode ? '' : (row['fr'] ?? '');
+        srControllers[i].text = row['sr'] ?? '';
+      }
+    });
+  }
+
   Future<void> _saveCurrentDraft() async {
     if (!_hasCurrentData()) return;
 
@@ -1553,6 +1659,18 @@ class _FirstScreenState extends State<FirstScreen> {
                           label: Text('${_drafts.length}'),
                           child: const Icon(Icons.drafts_outlined),
                         ),
+                        iconSize: 25,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 36,
+                          minHeight: 44,
+                        ),
+                      ),
+
+                      IconButton(
+                        tooltip: 'Paste token rows',
+                        onPressed: pasteTokenData,
+                        icon: const Icon(Icons.content_paste),
                         iconSize: 25,
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(
