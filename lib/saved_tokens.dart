@@ -1,7 +1,8 @@
 import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:photo_view/photo_view.dart';
+import 'package:photo_view/photo_view_gallery.dart';
 
 class SavedReceiptsScreen extends StatefulWidget {
   final List<File> receipts;
@@ -88,7 +89,7 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
       context,
       MaterialPageRoute(
         builder:
-            (context) => _ReceiptViewerScreen(
+            (context) => ReceiptViewerScreen(
               files: dayFiles,
               initialIndex: initialIndex < 0 ? 0 : initialIndex,
               onShare: (file) => _shareFiles([file]),
@@ -401,105 +402,61 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
   }
 }
 
-class _ReceiptViewerScreen extends StatefulWidget {
+class ReceiptViewerScreen extends StatefulWidget {
   final List<File> files;
   final int initialIndex;
   final Future<void> Function(File file) onShare;
 
-  const _ReceiptViewerScreen({
+  const ReceiptViewerScreen({
+    super.key,
     required this.files,
     required this.initialIndex,
     required this.onShare,
   });
 
   @override
-  State<_ReceiptViewerScreen> createState() => _ReceiptViewerScreenState();
+  State<ReceiptViewerScreen> createState() => _ReceiptViewerScreenState();
 }
 
-class _ReceiptViewerScreenState extends State<_ReceiptViewerScreen>
-    with SingleTickerProviderStateMixin {
+class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
   late final PageController _pageController;
+  late final List<PhotoViewScaleStateController> _scaleControllers;
+
   late int _currentIndex;
-
-  late final TransformationController _transformationController;
-  late final AnimationController _animationController;
-  Animation<Matrix4>? _animation;
-
-  bool _isZoomed = false;
 
   @override
   void initState() {
     super.initState();
 
     _currentIndex = widget.initialIndex;
-
     _pageController = PageController(initialPage: widget.initialIndex);
 
-    _transformationController = TransformationController();
-
-    _animationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 250),
-    )..addListener(() {
-      if (_animation != null) {
-        _transformationController.value = _animation!.value;
-      }
-    });
+    _scaleControllers = List.generate(
+      widget.files.length,
+      (_) => PhotoViewScaleStateController(),
+    );
   }
 
   @override
   void dispose() {
     _pageController.dispose();
-    _transformationController.dispose();
-    _animationController.dispose();
+
+    for (final controller in _scaleControllers) {
+      controller.dispose();
+    }
+
     super.dispose();
   }
 
-  void _resetZoom() {
-    _animationController.stop();
-    _animation = Matrix4Tween(
-      begin: _transformationController.value,
-      end: Matrix4.identity(),
-    ).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
-    );
-
-    _animationController.forward(from: 0);
+  void _toggleZoom() {
+    final controller = _scaleControllers[_currentIndex];
 
     setState(() {
-      _isZoomed = false;
-    });
-  }
-
-  void _zoomIn(Offset localPosition) {
-    _animationController.stop();
-
-    final current = _transformationController.value;
-    final currentScale = current.getMaxScaleOnAxis();
-
-    if (currentScale > 1.05) {
-      _resetZoom();
-      return;
-    }
-
-    const targetScale = 2.5;
-
-    final zoomMatrix =
-        Matrix4.identity()
-          ..translate(
-            localPosition.dx * (1 - targetScale),
-            localPosition.dy * (1 - targetScale),
-          )
-          ..scale(targetScale);
-
-    _animation = Matrix4Tween(begin: current, end: zoomMatrix).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
-    );
-
-    _animationController.forward(from: 0);
-
-    setState(() {
-      _isZoomed = true;
+      if (controller.scaleState.isScaleStateZooming) {
+        controller.scaleState = PhotoViewScaleState.initial;
+      } else {
+        controller.scaleState = PhotoViewScaleState.zoomedIn;
+      }
     });
   }
 
@@ -507,86 +464,37 @@ class _ReceiptViewerScreenState extends State<_ReceiptViewerScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Receipt ${_currentIndex + 1}/${widget.files.length}'),
+        title: Text('Token ${_currentIndex + 1}/${widget.files.length}'),
         actions: [
           IconButton(
-            tooltip: _isZoomed ? 'Zoom out' : 'Zoom in',
-            icon: Icon(_isZoomed ? Icons.zoom_out : Icons.zoom_in),
-            onPressed: () {
-              if (_isZoomed) {
-                _resetZoom();
-              } else {
-                final size = MediaQuery.sizeOf(context);
-                _zoomIn(Offset(size.width / 2, size.height / 2));
-              }
-            },
+            tooltip: 'Toggle zoom',
+            icon: const Icon(Icons.zoom_in),
+            onPressed: _toggleZoom,
           ),
         ],
       ),
-      body: PageView.builder(
-        controller: _pageController,
+      body: PhotoViewGallery.builder(
         itemCount: widget.files.length,
-        physics:
-            _isZoomed
-                ? const NeverScrollableScrollPhysics()
-                : const PageScrollPhysics(),
+        pageController: _pageController,
+        gaplessPlayback: true,
+        backgroundDecoration: BoxDecoration(
+          color: Theme.of(context).scaffoldBackgroundColor,
+        ),
+        scrollPhysics: const PageScrollPhysics(),
         onPageChanged: (index) {
-          _transformationController.value = Matrix4.identity();
-
           setState(() {
             _currentIndex = index;
-            _isZoomed = false;
           });
         },
-        itemBuilder: (context, index) {
-          return LayoutBuilder(
-            builder: (context, constraints) {
-              return Center(
-                child: GestureDetector(
-                  onDoubleTapDown: (details) {
-                    _doubleTapPosition = details.localPosition;
-                  },
-                  onDoubleTap: () {
-                    if (_isZoomed) {
-                      _resetZoom();
-                    } else {
-                      _zoomIn(_doubleTapPosition);
-                    }
-                  },
-                  child: InteractiveViewer(
-                    transformationController: _transformationController,
-                    minScale: 1.0,
-                    maxScale: 5.0,
-                    panEnabled: true,
-                    scaleEnabled: true,
-                    onInteractionEnd: (_) {
-                      final scale =
-                          _transformationController.value.getMaxScaleOnAxis();
-
-                      if (scale <= 1.05 && _isZoomed) {
-                        setState(() {
-                          _isZoomed = false;
-                        });
-                      } else if (scale > 1.05 && !_isZoomed) {
-                        setState(() {
-                          _isZoomed = true;
-                        });
-                      }
-                    },
-                    child: SizedBox(
-                      width: constraints.maxWidth,
-                      height: constraints.maxHeight,
-                      child: Image.file(
-                        widget.files[index],
-                        fit: BoxFit.contain,
-                        errorBuilder:
-                            (_, _, _) =>
-                                const Icon(Icons.broken_image, size: 60),
-                      ),
-                    ),
-                  ),
-                ),
-              );
+        builder: (context, index) {
+          return PhotoViewGalleryPageOptions(
+            imageProvider: FileImage(widget.files[index]),
+            initialScale: PhotoViewComputedScale.contained,
+            minScale: PhotoViewComputedScale.contained,
+            maxScale: PhotoViewComputedScale.covered * 5,
+            scaleStateController: _scaleControllers[index],
+            errorBuilder: (context, error, stackTrace) {
+              return const Center(child: Icon(Icons.broken_image, size: 60));
             },
           );
         },
@@ -598,7 +506,9 @@ class _ReceiptViewerScreenState extends State<_ReceiptViewerScreen>
             width: double.infinity,
             height: 52,
             child: ElevatedButton.icon(
-              onPressed: () => widget.onShare(widget.files[_currentIndex]),
+              onPressed: () {
+                widget.onShare(widget.files[_currentIndex]);
+              },
               icon: const Icon(Icons.share),
               label: const Text('Share to WhatsApp'),
               style: ElevatedButton.styleFrom(
@@ -611,6 +521,4 @@ class _ReceiptViewerScreenState extends State<_ReceiptViewerScreen>
       ),
     );
   }
-
-  Offset _doubleTapPosition = Offset.zero;
 }

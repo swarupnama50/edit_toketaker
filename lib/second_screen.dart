@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:token_taker/saved_tokens.dart';
+import 'package:share_plus/share_plus.dart';
 
 class SecondScreen extends StatefulWidget {
   final List<Map<String, String>> data;
@@ -70,6 +71,30 @@ class _SecondScreenState extends State<SecondScreen> {
     }
   }
 
+  Future<void> _viewSavedReceipt(File file) async {
+    if (!mounted || !await file.exists()) return;
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder:
+            (_) => ReceiptViewerScreen(
+              files: [file],
+              initialIndex: 0,
+              onShare: (file) async {
+                // Reuse the existing sharing feature from SavedReceiptsScreen.
+                await SharePlus.instance.share(
+                  ShareParams(
+                    files: [XFile(file.path, mimeType: 'image/jpeg')],
+                    sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
+                  ),
+                );
+              },
+            ),
+      ),
+    );
+  }
+
   void _showSavedReceipts() {
     Navigator.push(
       context,
@@ -98,7 +123,6 @@ class _SecondScreenState extends State<SecondScreen> {
     return 0;
   }
 
-  @override
   @override
   void initState() {
     super.initState();
@@ -277,7 +301,7 @@ class _SecondScreenState extends State<SecondScreen> {
 
   Widget _cell(String value, {bool isHeader = false}) {
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: isHeader ? 8 : 10, horizontal: 2),
+      padding: EdgeInsets.symmetric(vertical: isHeader ? 5 : 3, horizontal: 2),
       child: Text(
         value,
         textAlign: TextAlign.center,
@@ -349,12 +373,40 @@ class _SecondScreenState extends State<SecondScreen> {
     }
   }
 
-  void _showMessage(String message) {
+  void _showMessage(String message, {VoidCallback? onView}) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Expanded(child: Text(message)),
+            if (onView != null) ...[
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () {
+                  messenger.hideCurrentSnackBar();
+                  onView();
+                },
+                child: const Text(
+                  'View',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        duration: const Duration(seconds: 5),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 80),
+      ),
+    );
   }
 
   // SAVE RECEIPT AS JPG
@@ -418,7 +470,10 @@ class _SecondScreenState extends State<SecondScreen> {
 
       await Gal.putImage(file.path);
 
-      _showMessage('Receipt saved successfully.');
+      _showMessage(
+        'Receipt saved successfully.',
+        onView: () => _viewSavedReceipt(file),
+      );
     } catch (e) {
       _showMessage('Could not save receipt: $e');
     } finally {
@@ -466,7 +521,7 @@ class _SecondScreenState extends State<SecondScreen> {
                 ],
               ),
 
-              const SizedBox(height: 12),
+              const SizedBox(height: 6),
 
               Table(
                 columnWidths: _columnWidths,
@@ -486,7 +541,7 @@ class _SecondScreenState extends State<SecondScreen> {
                 ],
               ),
 
-              const SizedBox(height: 12),
+              const SizedBox(height: 6),
 
               Text(
                 'Total: ₹ $totalAmount',

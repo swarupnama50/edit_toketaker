@@ -218,6 +218,8 @@ class _FirstScreenState extends State<FirstScreen> {
           SnackBar(
             content: Text('Warning: Number $value is already entered!'),
             duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.only(left: 12, right: 12, bottom: 60),
           ),
         );
     } else if (!exists) {
@@ -389,7 +391,11 @@ class _FirstScreenState extends State<FirstScreen> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not load saved receipts: $e')),
+        SnackBar(
+          content: Text('Could not load saved receipts: $e'),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.only(left: 12, right: 12, bottom: 60),
+        ),
       );
     }
   }
