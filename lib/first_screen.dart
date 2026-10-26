@@ -4,6 +4,7 @@ import 'package:token_taker/saved_tokens.dart';
 import 'package:token_taker/second_screen.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -32,12 +33,364 @@ class _FirstScreenState extends State<FirstScreen> {
 
   final TextEditingController nameController = TextEditingController();
 
-  @override
+  // ================= DRAFTS =================
+
+  static const String _draftsKey = 'token_taker_drafts';
+
+  List<Map<String, dynamic>> _drafts = [];
+  String? _activeDraftId;
+
+  bool _hasCurrentData() {
+    return nameController.text.trim().isNotEmpty ||
+        numControllers.any((controller) => controller.text.trim().isNotEmpty);
+  }
+
+  Map<String, dynamic> _createDraftSnapshot(String id) {
+    final rows = <Map<String, String>>[];
+
+    for (int i = 0; i < numControllers.length; i++) {
+      final num = numControllers[i].text.trim();
+      final fr = frControllers[i].text.trim();
+      final sr = srControllers[i].text.trim();
+
+      if (num.isNotEmpty || fr.isNotEmpty || sr.isNotEmpty) {
+        rows.add({'num': num, 'fr': fr, 'sr': sr});
+      }
+    }
+
+    return {
+      'id': id,
+      'name': nameController.text,
+      'isTRMode': isTRMode,
+      'rows': rows,
+      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+    };
+  }
+
+  Future<void> _persistDrafts() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.setString(_draftsKey, jsonEncode(_drafts));
+  }
+
+  Future<void> _loadDrafts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString(_draftsKey);
+
+    if (saved == null || saved.isEmpty) return;
+
+    try {
+      final decoded = jsonDecode(saved) as List<dynamic>;
+
+      if (!mounted) return;
+
+      setState(() {
+        _drafts =
+            decoded
+                .map((item) => Map<String, dynamic>.from(item as Map))
+                .toList();
+      });
+    } catch (_) {
+      // Ignore invalid draft data rather than crashing the app.
+    }
+  }
+
+  Future<void> _saveCurrentDraft() async {
+    if (!_hasCurrentData()) return;
+
+    final id =
+        _activeDraftId ?? DateTime.now().microsecondsSinceEpoch.toString();
+
+    final snapshot = _createDraftSnapshot(id);
+
+    final index = _drafts.indexWhere((draft) => draft['id'] == id);
+
+    if (index >= 0) {
+      _drafts[index] = snapshot;
+    } else {
+      _drafts.add(snapshot);
+    }
+
+    _activeDraftId = id;
+
+    await _persistDrafts();
+
+    if (mounted) setState(() {});
+  }
+
+  void _clearCurrentToken() {
+    hideKeyboard();
+
+    for (final controller in numControllers) {
+      controller.clear();
+    }
+
+    for (final controller in frControllers) {
+      controller.clear();
+    }
+
+    for (final controller in srControllers) {
+      controller.clear();
+    }
+
+    nameController.clear();
+    warnedDuplicateRows.clear();
+    _activeDraftId = null;
+
+    amountRevision.value++;
+
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _createNewToken() async {
+    hideKeyboard();
+
+    // Save a draft only when at least one Num field contains text.
+    if (_hasCurrentData()) {
+      await _saveCurrentDraft();
+    }
+
+    if (!mounted) return;
+
+    _clearCurrentToken();
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('New blank token list created'),
+          duration: Duration(seconds: 1),
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.only(left: 12, right: 12, bottom: 60),
+        ),
+      );
+  }
+
+  Future<void> _openDraft(Map<String, dynamic> draft) async {
+    final targetId = draft['id'] as String?;
+
+    // Save the current list only if it is different from the selected draft.
+    // If the selected draft is already open, save its latest changes
+    // and keep the current screen as it is.
+    if (_activeDraftId == targetId) {
+      await _saveCurrentDraft();
+      return;
+    }
+
+    // Save the current token before switching to another draft.
+    if (_hasCurrentData()) {
+      await _saveCurrentDraft();
+    }
+
+    if (!mounted) return;
+
+    // Keep the remaining existing _openDraft code here.
+
+    final rows =
+        (draft['rows'] as List<dynamic>? ?? [])
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
+
+    hideKeyboard();
+
+    // Clear existing data.
+    for (final controller in numControllers) {
+      controller.clear();
+    }
+
+    for (final controller in frControllers) {
+      controller.clear();
+    }
+
+    for (final controller in srControllers) {
+      controller.clear();
+    }
+
+    // Ensure there are enough rows for the selected draft.
+    while (numControllers.length < rows.length + 1 &&
+        numControllers.length < 200) {
+      addNewRow();
+    }
+
+    setState(() {
+      isTRMode = draft['isTRMode'] as bool? ?? false;
+      nameController.text = draft['name'] as String? ?? '';
+      _activeDraftId = draft['id'] as String?;
+
+      for (int i = 0; i < rows.length && i < numControllers.length; i++) {
+        numControllers[i].text = rows[i]['num'] as String? ?? '';
+        frControllers[i].text = rows[i]['fr'] as String? ?? '';
+        srControllers[i].text = rows[i]['sr'] as String? ?? '';
+      }
+
+      warnedDuplicateRows.clear();
+      amountRevision.value++;
+    });
+
+    await _saveMode(isTRMode);
+  }
+
+  Future<void> _showDrafts() async {
+    hideKeyboard();
+
+    await _loadDrafts();
+
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final sortedDrafts = List<Map<String, dynamic>>.from(_drafts)
+              ..sort((a, b) {
+                final aTime = a['updatedAt'] as int? ?? 0;
+                final bTime = b['updatedAt'] as int? ?? 0;
+                return bTime.compareTo(aTime);
+              });
+
+            return AlertDialog(
+              title: Row(
+                children: [
+                  const Icon(Icons.drafts_outlined),
+                  const SizedBox(width: 8),
+                  const Expanded(child: Text('Drafts')),
+                  Text(
+                    '${sortedDrafts.length}',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: double.maxFinite,
+                child:
+                    sortedDrafts.isEmpty
+                        ? const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 24),
+                          child: Center(child: Text('No drafts saved yet')),
+                        )
+                        : ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: sortedDrafts.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final draft = sortedDrafts[index];
+                            final rows = draft['rows'] as List<dynamic>? ?? [];
+
+                            final name =
+                                (draft['name'] as String? ?? '').trim();
+
+                            final date = DateTime.fromMillisecondsSinceEpoch(
+                              draft['updatedAt'] as int? ?? 0,
+                            );
+
+                            final dateText =
+                                '${date.day.toString().padLeft(2, '0')}/'
+                                '${date.month.toString().padLeft(2, '0')}/'
+                                '${date.year} '
+                                '${date.hour.toString().padLeft(2, '0')}:'
+                                '${date.minute.toString().padLeft(2, '0')}';
+
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(Icons.description_outlined),
+                              title: Text(
+                                name.isEmpty ? 'Untitled token' : name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(
+                                '${rows.length} entries • $dateText',
+                              ),
+                              onTap: () async {
+                                Navigator.pop(dialogContext);
+                                await _openDraft(draft);
+                              },
+                              trailing: IconButton(
+                                tooltip: 'Delete draft',
+                                icon: const Icon(
+                                  Icons.delete_outline,
+                                  color: Colors.red,
+                                ),
+                                onPressed: () async {
+                                  final confirm = await showDialog<bool>(
+                                    context: context,
+                                    builder:
+                                        (confirmContext) => AlertDialog(
+                                          title: const Text('Delete draft?'),
+                                          content: Text(
+                                            'Delete "${name.isEmpty ? 'Untitled token' : name}"?',
+                                          ),
+                                          actions: [
+                                            TextButton(
+                                              onPressed:
+                                                  () => Navigator.pop(
+                                                    confirmContext,
+                                                    false,
+                                                  ),
+                                              child: const Text('Cancel'),
+                                            ),
+                                            TextButton(
+                                              onPressed:
+                                                  () => Navigator.pop(
+                                                    confirmContext,
+                                                    true,
+                                                  ),
+                                              child: const Text(
+                                                'Delete',
+                                                style: TextStyle(
+                                                  color: Colors.red,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                  );
+
+                                  if (confirm != true) return;
+
+                                  final id = draft['id'];
+
+                                  _drafts.removeWhere(
+                                    (item) => item['id'] == id,
+                                  );
+
+                                  if (_activeDraftId == id) {
+                                    _activeDraftId = null;
+                                  }
+
+                                  await _persistDrafts();
+
+                                  if (!mounted) return;
+
+                                  setDialogState(() {});
+                                  setState(() {});
+                                },
+                              ),
+                            );
+                          },
+                        ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Close'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+
     addNewRow();
     _loadMode();
+    _loadDrafts();
   }
 
   Future<void> _loadMode() async {
@@ -238,11 +591,11 @@ class _FirstScreenState extends State<FirstScreen> {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-          SnackBar(
-            content: Text('Warning: Number $value is already entered!'),
-            duration: const Duration(seconds: 2),
+          const SnackBar(
+            content: Text('This number already exists'),
+            duration: Duration(seconds: 2),
             behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.only(left: 12, right: 12, bottom: 60),
+            margin: EdgeInsets.fromLTRB(12, 0, 12, 90),
           ),
         );
     } else if (!exists) {
@@ -317,11 +670,21 @@ class _FirstScreenState extends State<FirstScreen> {
           keyboardType: keyboardType,
           textInputAction: textInputAction,
           textAlign: textAlign,
+          style:
+              fieldType == 'num'
+                  ? const TextStyle(fontWeight: FontWeight.w500)
+                  : null,
           inputFormatters: inputFormatters,
           onChanged: onChanged,
           onEditingComplete: onEditingComplete,
           onSubmitted: onSubmitted,
-          decoration: decoration,
+          decoration: decoration.copyWith(
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(
+              // horizontal: 8,
+              vertical: 3,
+            ),
+          ),
         ),
       ),
     );
@@ -825,7 +1188,7 @@ class _FirstScreenState extends State<FirstScreen> {
         const gap = 8.0;
 
         return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
+          padding: const EdgeInsets.symmetric(vertical: 4),
           child: Row(
             children: [
               SizedBox(
@@ -1135,10 +1498,8 @@ class _FirstScreenState extends State<FirstScreen> {
                 child: SizedBox(
                   height: 44,
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // Clear all: far-left
+                      // Clear all
                       IconButton(
                         tooltip: 'Clear all rows',
                         onPressed: _confirmClearAll,
@@ -1146,33 +1507,67 @@ class _FirstScreenState extends State<FirstScreen> {
                           Icons.delete_outline,
                           color: Colors.red,
                         ),
-                        iconSize: 26,
+                        iconSize: 25,
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(
-                          minWidth: 40,
+                          minWidth: 36,
                           minHeight: 44,
                         ),
                       ),
 
-                      // Saved receipts
+                      // Gallery
                       IconButton(
                         tooltip: 'Saved receipts',
                         onPressed: _openSavedReceipts,
                         icon: const Icon(Icons.photo_library_outlined),
-                        iconSize: 28,
+                        iconSize: 25,
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(
-                          minWidth: 40,
+                          minWidth: 36,
+                          minHeight: 44,
+                        ),
+                      ),
+
+                      // New Token
+                      IconButton(
+                        tooltip: 'New token',
+                        onPressed: _createNewToken,
+                        icon: const Icon(
+                          Icons.note_add_outlined,
+                          color: Colors.blue,
+                        ),
+                        iconSize: 25,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 36,
+                          minHeight: 44,
+                        ),
+                      ),
+
+                      // Drafts
+                      IconButton(
+                        tooltip: 'Drafts',
+                        onPressed: _showDrafts,
+                        icon: Badge(
+                          isLabelVisible: _drafts.isNotEmpty,
+                          label: Text('${_drafts.length}'),
+                          child: const Icon(Icons.drafts_outlined),
+                        ),
+                        iconSize: 25,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 36,
                           minHeight: 44,
                         ),
                       ),
 
                       // Total
-                      Flexible(
+                      Expanded(
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
                           child: Text(
-                            'Total: ₹ ${getTotalAmount()}',
+                            '₹ ${getTotalAmount()}',
                             style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
@@ -1181,7 +1576,9 @@ class _FirstScreenState extends State<FirstScreen> {
                         ),
                       ),
 
-                      // Next: far-right
+                      const SizedBox(width: 6),
+
+                      // Next
                       SizedBox(
                         width: 44,
                         height: 44,

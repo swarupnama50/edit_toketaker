@@ -309,7 +309,12 @@ class _SecondScreenState extends State<SecondScreen> {
         style: TextStyle(
           color: Colors.black,
           fontSize: isHeader ? 13 : 14,
-          fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
+          fontWeight:
+              isHeader
+                  ? FontWeight.bold
+                  : (value.isNotEmpty && !value.startsWith('₹') && value != 'X'
+                      ? FontWeight.w500
+                      : FontWeight.normal),
         ),
       ),
     );
