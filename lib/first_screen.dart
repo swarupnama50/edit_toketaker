@@ -105,16 +105,23 @@ class _FirstScreenState extends State<FirstScreen> {
 
     final parsedRows = <Map<String, String>>[];
 
-    final numPattern = RegExp(
+    final numberPattern = RegExp(
+      r'^(AP|HP|\d{2}V|\d[HE]|\d{2}|\d)',
+      caseSensitive: false,
+    );
+
+    final validNumPattern = RegExp(
       r'^(?:\d{2}|\d[HE]|\d{2}V|AP|HP)$',
       caseSensitive: false,
     );
 
+    // final separators = RegExp(r'[-+@_=/*\s:]+');
+
     for (final line in text.split(RegExp(r'\r?\n'))) {
       final trimmed = line.trim();
+
       if (trimmed.isEmpty) continue;
 
-      // Ignore totals and descriptive lines.
       if (RegExp(
         r'^(?:total|grand\s+total)\b',
         caseSensitive: false,
@@ -122,61 +129,100 @@ class _FirstScreenState extends State<FirstScreen> {
         continue;
       }
 
-      // Extract Num, optional suffix, and the remaining text.
-      final match = RegExp(
-        r'^\s*(AP|HP|\d{2}V|\d[HE]|\d{2}|\d)([A-Za-z]*?)\s*(.*?)\s*$',
-        caseSensitive: false,
-      ).firstMatch(trimmed);
-
+      final match = numberPattern.firstMatch(trimmed);
       if (match == null) continue;
 
       var num = match.group(1)!.toUpperCase();
-      final suffix = match.group(2)!.toUpperCase();
-      final remainder = match.group(3)!;
+      var remainder = trimmed.substring(match.end);
 
-      // Convert 4ending to 4E and 5house to 5H.
-      if (RegExp(r'^\d$').hasMatch(num) && suffix.isNotEmpty) {
-        if (suffix.startsWith('E') || suffix.startsWith('H')) {
-          num += suffix[0];
-        } else {
-          continue;
+      // Recognize suffix words either directly after the number
+      // or after separators, such as 23==velu==20 and 6==house==10.
+      final suffixMatch = RegExp(
+        r'^\s*[-+@_=/*:]*\s*([A-Za-z]+)',
+      ).firstMatch(remainder);
+
+      if (suffixMatch != null) {
+        final word = suffixMatch.group(1)!.toUpperCase();
+
+        if (RegExp(r'^\d{2}$').hasMatch(num) && word.startsWith('V')) {
+          num += 'V';
+        } else if (RegExp(r'^\d$').hasMatch(num) && word.startsWith('H')) {
+          num += 'H';
+        } else if (RegExp(r'^\d$').hasMatch(num) && word.startsWith('E')) {
+          num += 'E';
         }
-      } else if (suffix.isNotEmpty) {
-        continue;
+
+        // Remove the suffix word so its letters aren't treated as data.
+        remainder = remainder.replaceRange(
+          suffixMatch.start,
+          suffixMatch.end,
+          ' ',
+        );
       }
 
-      if (!numPattern.hasMatch(num)) continue;
+      if (!validNumPattern.hasMatch(num)) continue;
 
-      // Extract amounts after Num.
-      // Supports formats like:
-      // 75 - 10 - 20
-      // 14=20fr
-      // AP==20
-      // 4E -10
-      // 45 20
-      final amountTexts =
+      // Look for explicitly labelled FR/SR/TR amounts first.
+      final frMatch = RegExp(
+        r'\bFR\b[^0-9]{0,15}(\d{1,5})',
+        caseSensitive: false,
+      ).firstMatch(remainder);
+
+      final srMatch = RegExp(
+        r'\bSR\b[^0-9]{0,15}(\d{1,5})',
+        caseSensitive: false,
+      ).firstMatch(remainder);
+
+      final trMatch = RegExp(
+        r'\bTR\b[^0-9]{0,15}(\d{1,5})',
+        caseSensitive: false,
+      ).firstMatch(remainder);
+
+      // Remove words, then collect unlabelled amounts.
+      final withoutWords = remainder.replaceAll(RegExp(r'[A-Za-z]+'), ' ');
+
+      final amounts =
           RegExp(
             r'\d{1,5}',
-          ).allMatches(remainder).map((m) => m.group(0)!).where((value) {
+          ).allMatches(withoutWords).map((m) => m.group(0)!).where((value) {
             final amount = int.tryParse(value);
             return amount != null && amount >= 1 && amount <= 15000;
           }).toList();
 
-      var fr = '';
-      var sr = '';
+      String fr = '';
+      String sr = '';
 
-      if (amountTexts.isNotEmpty) {
-        if (isTRMode) {
-          // TR mode: use the last amount when multiple amounts exist.
-          sr = amountTexts.length >= 2 ? amountTexts.last : amountTexts.first;
+      if (isTRMode) {
+        final trValue = trMatch?.group(1);
+        final srValue = srMatch?.group(1);
+
+        if (trValue != null) {
+          sr = trValue;
+        } else if (srValue != null) {
+          sr = srValue;
+        } else if (amounts.isNotEmpty) {
+          sr = amounts.last;
+        }
+      } else {
+        if (frMatch != null) {
+          fr = frMatch.group(1)!;
+        }
+
+        if (srMatch != null) {
+          sr = srMatch.group(1)!;
+        }
+
+        // If there are no explicit labels, use the amounts in order.
+        if (frMatch == null && srMatch == null) {
+          if (amounts.isNotEmpty) fr = amounts[0];
+          if (amounts.length >= 2) sr = amounts[1];
         } else {
-          fr = amountTexts.first;
-
-          // If three values exist, use the third as SR.
-          if (amountTexts.length >= 3) {
-            sr = amountTexts[2];
-          } else if (amountTexts.length == 2) {
-            sr = amountTexts[1];
+          // Fill any unlabelled field from the remaining amounts.
+          if (fr.isEmpty && amounts.isNotEmpty) {
+            fr = amounts[0];
+          }
+          if (sr.isEmpty && amounts.length >= 2) {
+            sr = amounts[1];
           }
         }
       }
@@ -186,11 +232,25 @@ class _FirstScreenState extends State<FirstScreen> {
       if (parsedRows.length >= 200) break;
     }
 
-    if (parsedRows.isEmpty) return;
+    if (parsedRows.isEmpty || !mounted) return;
 
-    if (!mounted) return;
+    // Ensure enough rows exist before filling.
+    while (numControllers.length < parsedRows.length + 1 &&
+        numControllers.length < 200) {
+      addNewRow();
+    }
 
     setState(() {
+      for (final controller in numControllers) {
+        controller.clear();
+      }
+      for (final controller in frControllers) {
+        controller.clear();
+      }
+      for (final controller in srControllers) {
+        controller.clear();
+      }
+
       for (int i = 0; i < parsedRows.length && i < numControllers.length; i++) {
         final row = parsedRows[i];
 
@@ -198,6 +258,8 @@ class _FirstScreenState extends State<FirstScreen> {
         frControllers[i].text = isTRMode ? '' : (row['fr'] ?? '');
         srControllers[i].text = row['sr'] ?? '';
       }
+
+      amountRevision.value++;
     });
   }
 
