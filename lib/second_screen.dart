@@ -72,7 +72,9 @@ class _SecondScreenState extends State<SecondScreen> {
   }
 
   Future<void> _viewSavedReceipt(File file) async {
-    if (!mounted || !await file.exists()) return;
+    final exists = await file.exists();
+
+    if (!mounted || !exists) return;
 
     await Navigator.push(
       context,
@@ -82,7 +84,6 @@ class _SecondScreenState extends State<SecondScreen> {
               files: [file],
               initialIndex: 0,
               onShare: (file) async {
-                // Reuse the existing sharing feature from SavedReceiptsScreen.
                 await SharePlus.instance.share(
                   ShareParams(
                     files: [XFile(file.path, mimeType: 'image/jpeg')],
@@ -327,27 +328,47 @@ class _SecondScreenState extends State<SecondScreen> {
   }
 
   // CAPTURE RECEIPT AS PNG
-
   Future<Uint8List?> _captureReceiptPng() async {
     try {
       await WidgetsBinding.instance.endOfFrame;
 
-      final context = _receiptKey.currentContext;
-      if (context == null) {
-        debugPrint('Receipt context is null');
+      if (!mounted) return null;
+
+      final receiptContext = _receiptKey.currentContext;
+
+      if (receiptContext == null || !receiptContext.mounted) {
+        debugPrint('Receipt context is null or unmounted');
         return null;
       }
 
-      final boundary = context.findRenderObject() as RenderRepaintBoundary?;
+      final renderObject = receiptContext.findRenderObject();
 
-      if (boundary == null) {
-        debugPrint('Receipt boundary is null');
+      if (renderObject is! RenderRepaintBoundary) {
+        debugPrint('Receipt boundary is null or invalid');
         return null;
       }
 
-      // Wait for the receipt widget to finish layout and painting.
+      final boundary = renderObject;
+
       await Future.delayed(const Duration(milliseconds: 300));
+
+      if (!mounted ||
+          !receiptContext.mounted ||
+          !boundary.attached ||
+          !boundary.hasSize) {
+        debugPrint('Receipt boundary is no longer ready');
+        return null;
+      }
+
       await WidgetsBinding.instance.endOfFrame;
+
+      if (!mounted ||
+          !receiptContext.mounted ||
+          !boundary.attached ||
+          !boundary.hasSize) {
+        debugPrint('Receipt boundary is no longer ready after frame');
+        return null;
+      }
 
       final image = await boundary.toImage(pixelRatio: 2.0);
 
