@@ -4,6 +4,7 @@ import 'package:token_taker/saved_tokens.dart';
 import 'package:token_taker/second_screen.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class FirstScreen extends StatefulWidget {
   const FirstScreen({super.key});
@@ -14,6 +15,8 @@ class FirstScreen extends StatefulWidget {
 
 class _FirstScreenState extends State<FirstScreen> {
   bool isTRMode = false;
+  bool _modeLoaded = false;
+
   final List<int> allowedValues = List.generate(20, (i) => (i + 1) * 5);
 
   final List<TextEditingController> numControllers = [];
@@ -29,9 +32,28 @@ class _FirstScreenState extends State<FirstScreen> {
   final TextEditingController nameController = TextEditingController();
 
   @override
+  @override
   void initState() {
     super.initState();
     addNewRow();
+    _loadMode();
+  }
+
+  Future<void> _loadMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedMode = prefs.getBool('isTRMode') ?? false;
+
+    if (!mounted) return;
+
+    setState(() {
+      isTRMode = savedMode;
+      _modeLoaded = true;
+    });
+  }
+
+  Future<void> _saveMode(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('isTRMode', value);
   }
 
   void handleBackspace(
@@ -1000,6 +1022,10 @@ class _FirstScreenState extends State<FirstScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_modeLoaded) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
     final sortedIndexes = getSortedRowIndexes();
 
     return Scaffold(
@@ -1025,10 +1051,14 @@ class _FirstScreenState extends State<FirstScreen> {
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: OutlinedButton(
-              onPressed: () {
+              onPressed: () async {
+                final newMode = !isTRMode;
+
                 setState(() {
-                  isTRMode = !isTRMode;
+                  isTRMode = newMode;
                 });
+
+                await _saveMode(newMode);
               },
               child: Text(
                 isTRMode ? 'TR' : 'FR, SR',
