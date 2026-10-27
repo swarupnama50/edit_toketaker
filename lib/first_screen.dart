@@ -5,7 +5,7 @@ import 'package:token_taker/second_screen.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
-
+import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class FirstScreen extends StatefulWidget {
@@ -15,10 +15,10 @@ class FirstScreen extends StatefulWidget {
   State<FirstScreen> createState() => _FirstScreenState();
 }
 
-class _FirstScreenState extends State<FirstScreen> {
+class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   bool isTRMode = false;
   bool _modeLoaded = false;
-
+  Timer? _draftSaveTimer;
   final List<int> allowedValues = List.generate(20, (i) => (i + 1) * 5);
 
   final List<TextEditingController> numControllers = [];
@@ -42,7 +42,9 @@ class _FirstScreenState extends State<FirstScreen> {
 
   bool _hasCurrentData() {
     return nameController.text.trim().isNotEmpty ||
-        numControllers.any((controller) => controller.text.trim().isNotEmpty);
+        numControllers.any((c) => c.text.trim().isNotEmpty) ||
+        frControllers.any((c) => c.text.trim().isNotEmpty) ||
+        srControllers.any((c) => c.text.trim().isNotEmpty);
   }
 
   Map<String, dynamic> _createDraftSnapshot(String id) {
@@ -95,6 +97,31 @@ class _FirstScreenState extends State<FirstScreen> {
     }
   }
 
+  // ================= AUTO-SAVE DRAFT =================
+
+  // Timer? _draftSaveTimer;
+
+  void _scheduleDraftSave() {
+    _draftSaveTimer?.cancel();
+
+    if (!_hasCurrentData()) return;
+
+    _draftSaveTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) {
+        _saveCurrentDraft();
+      }
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _draftSaveTimer?.cancel();
+      _saveCurrentDraft();
+    }
+  }
   //===================Paste=========================
 
   Future<void> pasteTokenData() async {
@@ -232,35 +259,41 @@ class _FirstScreenState extends State<FirstScreen> {
       if (parsedRows.length >= 200) break;
     }
 
-    if (parsedRows.isEmpty || !mounted) return;
+       if (parsedRows.isEmpty || !mounted) return;
 
-    // Ensure enough rows exist before filling.
-    while (numControllers.length < parsedRows.length + 1 &&
+    // Find the next available row after existing entries.
+    int startIndex = numControllers.indexWhere(
+      (controller) => controller.text.trim().isEmpty,
+    );
+
+    if (startIndex == -1) {
+      startIndex = numControllers.length;
+    }
+
+    // Ensure enough rows exist for all pasted entries.
+    while (numControllers.length < startIndex + parsedRows.length &&
         numControllers.length < 200) {
       addNewRow();
     }
 
-    setState(() {
-      for (final controller in numControllers) {
-        controller.clear();
-      }
-      for (final controller in frControllers) {
-        controller.clear();
-      }
-      for (final controller in srControllers) {
-        controller.clear();
-      }
+    final availableRows = numControllers.length - startIndex;
+    final rowsToPaste =
+        parsedRows.length < availableRows ? parsedRows.length : availableRows;
 
-      for (int i = 0; i < parsedRows.length && i < numControllers.length; i++) {
+    setState(() {
+      for (int i = 0; i < rowsToPaste; i++) {
+        final rowIndex = startIndex + i;
         final row = parsedRows[i];
 
-        numControllers[i].text = row['num'] ?? '';
-        frControllers[i].text = isTRMode ? '' : (row['fr'] ?? '');
-        srControllers[i].text = row['sr'] ?? '';
+        numControllers[rowIndex].text = row['num'] ?? '';
+        frControllers[rowIndex].text = isTRMode ? '' : (row['fr'] ?? '');
+        srControllers[rowIndex].text = row['sr'] ?? '';
       }
 
       amountRevision.value++;
     });
+
+    _scheduleDraftSave();
   }
 
   Future<void> _saveCurrentDraft() async {
@@ -556,6 +589,8 @@ class _FirstScreenState extends State<FirstScreen> {
   void initState() {
     super.initState();
 
+    WidgetsBinding.instance.addObserver(this);
+
     addNewRow();
     _loadMode();
     _loadDrafts();
@@ -577,6 +612,16 @@ class _FirstScreenState extends State<FirstScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('isTRMode', value);
   }
+
+  // @override
+  // void didChangeAppLifecycleState(AppLifecycleState state) {
+  //   if (state == AppLifecycleState.inactive ||
+  //       state == AppLifecycleState.paused ||
+  //       state == AppLifecycleState.detached) {
+  //     _draftSaveTimer?.cancel();
+  //     _saveCurrentDraft();
+  //   }
+  // }
 
   void handleBackspace(
     TextEditingController controller,
@@ -946,7 +991,7 @@ class _FirstScreenState extends State<FirstScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Could not load saved receipts: $e'),
+          content: Text('Could not load saved tokens: $e'),
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.only(left: 12, right: 12, bottom: 60),
         ),
@@ -959,7 +1004,7 @@ class _FirstScreenState extends State<FirstScreen> {
       context: context,
       builder:
           (dialogContext) => AlertDialog(
-            title: const Text('Clear all rows?'),
+            title: const Text('Clear all?'),
             content: const Text(
               'Are you sure you want to clear all entered data?',
             ),
@@ -1137,10 +1182,17 @@ class _FirstScreenState extends State<FirstScreen> {
 
       // Refresh only the total/Continue area while text is being edited.
       amountRevision.value++;
+      _scheduleDraftSave();
     });
 
     frController.addListener(() {
       amountRevision.value++;
+      _scheduleDraftSave();
+    });
+
+    srController.addListener(() {
+      amountRevision.value++;
+      _scheduleDraftSave();
     });
 
     srController.addListener(() {
@@ -1522,6 +1574,9 @@ class _FirstScreenState extends State<FirstScreen> {
 
   @override
   void dispose() {
+    _draftSaveTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+
     for (var c in numControllers) {
       c.dispose();
     }
@@ -1569,6 +1624,7 @@ class _FirstScreenState extends State<FirstScreen> {
           height: 40,
           child: TextField(
             controller: nameController,
+            onChanged: (_) => _scheduleDraftSave(),
             textAlignVertical: TextAlignVertical.center,
             decoration: const InputDecoration(
               hintText: 'Enter name',
@@ -1591,6 +1647,7 @@ class _FirstScreenState extends State<FirstScreen> {
                 });
 
                 await _saveMode(newMode);
+                _scheduleDraftSave();
               },
               child: Text(
                 isTRMode ? 'TR' : 'FR, SR',
@@ -1667,85 +1724,75 @@ class _FirstScreenState extends State<FirstScreen> {
                   height: 44,
                   child: Row(
                     children: [
-                      // Clear all
-                      IconButton(
-                        tooltip: 'Clear all rows',
-                        onPressed: _confirmClearAll,
-                        icon: const Icon(
-                          Icons.delete_outline,
-                          color: Colors.red,
-                        ),
-                        iconSize: 25,
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                          minWidth: 36,
-                          minHeight: 44,
-                        ),
-                      ),
-
                       // Gallery
-                      IconButton(
-                        tooltip: 'Saved receipts',
-                        onPressed: _openSavedReceipts,
-                        icon: const Icon(Icons.photo_library_outlined),
-                        iconSize: 25,
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                          minWidth: 36,
-                          minHeight: 44,
+                      Expanded(
+                        child: IconButton(
+                          tooltip: 'Saved tokens',
+                          onPressed: _openSavedReceipts,
+                          icon: const Icon(Icons.photo_library_outlined),
+                          iconSize: 25,
+                          padding: EdgeInsets.zero,
                         ),
                       ),
 
-                      // New Token
-                      IconButton(
-                        tooltip: 'New token',
-                        onPressed: _createNewToken,
-                        icon: const Icon(
-                          Icons.note_add_outlined,
-                          color: Colors.blue,
-                        ),
-                        iconSize: 25,
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                          minWidth: 36,
-                          minHeight: 44,
+                      // Clear All
+                      Expanded(
+                        child: IconButton(
+                          tooltip: 'Clear all',
+                          onPressed: _confirmClearAll,
+                          icon: const Icon(
+                            Icons.delete_outline,
+                            color: Colors.red,
+                          ),
+                          iconSize: 25,
+                          padding: EdgeInsets.zero,
                         ),
                       ),
-
                       // Drafts
-                      IconButton(
-                        tooltip: 'Drafts',
-                        onPressed: _showDrafts,
-                        icon: Badge(
-                          isLabelVisible: _drafts.isNotEmpty,
-                          label: Text('${_drafts.length}'),
-                          child: const Icon(Icons.drafts_outlined),
+                      Expanded(
+                        child: IconButton(
+                          tooltip: 'Drafts',
+                          onPressed: _showDrafts,
+                          icon: Badge(
+                            isLabelVisible: _drafts.isNotEmpty,
+                            label: Text('${_drafts.length}'),
+                            child: const Icon(Icons.drafts_outlined),
+                          ),
+                          iconSize: 25,
+                          padding: EdgeInsets.zero,
                         ),
-                        iconSize: 25,
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                          minWidth: 36,
-                          minHeight: 44,
+                      ),
+                      // New Token
+                      Expanded(
+                        child: IconButton(
+                          tooltip: 'New token',
+                          onPressed: _createNewToken,
+                          icon: const Icon(
+                            Icons.note_add_outlined,
+                            color: Colors.blue,
+                          ),
+                          iconSize: 25,
+                          padding: EdgeInsets.zero,
                         ),
                       ),
 
-                      IconButton(
-                        tooltip: 'Paste token rows',
-                        onPressed: pasteTokenData,
-                        icon: const Icon(Icons.content_paste),
-                        iconSize: 25,
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                          minWidth: 36,
-                          minHeight: 44,
+                      // Paste
+                      Expanded(
+                        child: IconButton(
+                          tooltip: 'Paste token rows',
+                          onPressed: pasteTokenData,
+                          icon: const Icon(Icons.content_paste),
+                          iconSize: 25,
+                          padding: EdgeInsets.zero,
                         ),
                       ),
 
                       // Total
                       Expanded(
+                        flex: 2,
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
-                          alignment: Alignment.centerRight,
+                          alignment: Alignment.center,
                           child: Text(
                             '₹ ${getTotalAmount()}',
                             style: const TextStyle(
@@ -1756,51 +1803,53 @@ class _FirstScreenState extends State<FirstScreen> {
                         ),
                       ),
 
-                      const SizedBox(width: 6),
-
                       // Next
-                      SizedBox(
-                        width: 44,
-                        height: 44,
-                        child: FloatingActionButton(
-                          mini: true,
-                          elevation: 1,
-                          backgroundColor:
-                              canProceed() ? Colors.blue : Colors.grey,
-                          foregroundColor: Colors.white,
-                          onPressed:
-                              canProceed()
-                                  ? () {
-                                    if (isTRMode) {
-                                      for (
-                                        int i = 0;
-                                        i < numControllers.length;
-                                        i++
-                                      ) {
-                                        if (numControllers[i].text
-                                                .trim()
-                                                .isNotEmpty &&
-                                            srControllers[i].text
-                                                .trim()
-                                                .isEmpty) {
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            const SnackBar(
-                                              content: Text(
-                                                'Please fill all TR amount boxes before continuing.',
-                                              ),
-                                            ),
-                                          );
-                                          return;
+                      Expanded(
+                        child: Center(
+                          child: SizedBox(
+                            width: 40,
+                            height: 40,
+                            child: FloatingActionButton(
+                              mini: true,
+                              elevation: 1,
+                              backgroundColor:
+                                  canProceed() ? Colors.blue : Colors.grey,
+                              foregroundColor: Colors.white,
+                              onPressed:
+                                  canProceed()
+                                      ? () {
+                                        if (isTRMode) {
+                                          for (
+                                            int i = 0;
+                                            i < numControllers.length;
+                                            i++
+                                          ) {
+                                            if (numControllers[i].text
+                                                    .trim()
+                                                    .isNotEmpty &&
+                                                srControllers[i].text
+                                                    .trim()
+                                                    .isEmpty) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                const SnackBar(
+                                                  content: Text(
+                                                    'Please fill all TR amount boxes before continuing.',
+                                                  ),
+                                                ),
+                                              );
+                                              return;
+                                            }
+                                          }
                                         }
-                                      }
-                                    }
 
-                                    goToNextScreen();
-                                  }
-                                  : null,
-                          child: const Icon(Icons.arrow_forward, size: 20),
+                                        goToNextScreen();
+                                      }
+                                      : null,
+                              child: const Icon(Icons.arrow_forward, size: 20),
+                            ),
+                          ),
                         ),
                       ),
                     ],
