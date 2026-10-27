@@ -1070,7 +1070,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                     ? const Color(0xFFF8F9FB)
                     : rowIndex.isEven
                     ? Colors.white
-                    : const Color(0xFFF0F0F0),
+                    : const Color(0xFFE6F4FF),
             isDense: true,
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 5,
@@ -1430,9 +1430,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
             addNewRow();
           }
         }
-
-        if (mounted) setState(() {});
       }
+
+      // Rebuild on every Num change so amount boxes enable immediately.
+      if (mounted) setState(() {});
 
       // Refresh only the total/Continue area while text is being edited.
       amountRevision.value++;
@@ -1493,6 +1494,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     return RegExp(r'^\d{2}$').hasMatch(value) ||
         RegExp(r'^\d[HE]$').hasMatch(value) ||
+        RegExp(r'^\d{2}V$').hasMatch(value) ||
         value == 'AP' ||
         value == 'HP';
   }
@@ -1664,10 +1666,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   Widget buildRow(int index) {
     const double numWidth = 76;
-    const double gap = 8;
+    const double gap = 3;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
           SizedBox(
