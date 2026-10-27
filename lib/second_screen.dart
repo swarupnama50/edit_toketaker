@@ -76,13 +76,30 @@ class _SecondScreenState extends State<SecondScreen> {
 
     if (!mounted || !exists) return;
 
+    // Load all saved receipts, sorted newest first.
+    final directory = await _getReceiptsDirectory();
+
+    final files =
+        directory
+            .listSync()
+            .whereType<File>()
+            .where((f) => f.path.toLowerCase().endsWith('.jpg'))
+            .toList();
+
+    files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
+    // Find the newly saved receipt.
+    final initialIndex = files.indexWhere((f) => f.path == file.path);
+
+    if (!mounted || initialIndex == -1) return;
+
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder:
             (_) => ReceiptViewerScreen(
-              files: [file],
-              initialIndex: 0,
+              files: files,
+              initialIndex: initialIndex,
               onShare: (file) async {
                 await SharePlus.instance.share(
                   ShareParams(
@@ -692,6 +709,15 @@ class _SecondScreenState extends State<SecondScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: [
+              IconButton(
+                tooltip: 'Saved receipts',
+                onPressed: _showSavedReceipts,
+                icon: const Icon(Icons.photo_library_outlined),
+                iconSize: 28,
+              ),
+
+              const Spacer(),
+
               ElevatedButton.icon(
                 onPressed: _isBusy ? null : _handlePrintTap,
                 icon:
@@ -703,15 +729,6 @@ class _SecondScreenState extends State<SecondScreen> {
                         )
                         : const Icon(Icons.save_alt),
                 label: Text(_isBusy ? 'Saving...' : 'Save'),
-              ),
-
-              const Spacer(),
-
-              IconButton(
-                tooltip: 'Saved receipts',
-                onPressed: _showSavedReceipts,
-                icon: const Icon(Icons.photo_library_outlined),
-                iconSize: 28,
               ),
             ],
           ),

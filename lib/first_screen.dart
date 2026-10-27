@@ -19,8 +19,14 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   bool isTRMode = false;
   bool _modeLoaded = false;
   Timer? _draftSaveTimer;
-  final List<int> allowedValues = List.generate(20, (i) => (i + 1) * 5);
 
+  Timer? _workingSaveTimer;
+
+  static const String _workingStateKey = 'token_taker_current_working_state';
+
+  bool _restoringWorkingState = false;
+
+  final List<int> allowedValues = List.generate(20, (i) => (i + 1) * 5);
   final List<TextEditingController> numControllers = [];
   final List<TextEditingController> frControllers = [];
   final List<TextEditingController> srControllers = [];
@@ -39,6 +45,37 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   List<Map<String, dynamic>> _drafts = [];
   String? _activeDraftId;
+
+  String _getDraftTitle(Map<String, dynamic> draft) {
+    final name = (draft['name'] as String? ?? '').trim();
+
+    // If a name exists, always show only the name.
+    if (name.isNotEmpty) return name;
+
+    // Otherwise, show the first filled row's number and amounts.
+    final rows = draft['rows'] as List<dynamic>? ?? [];
+    final isTR = draft['isTRMode'] as bool? ?? false;
+
+    for (final item in rows) {
+      final row = Map<String, dynamic>.from(item as Map);
+
+      final num = (row['num'] as String? ?? '').trim();
+      final fr = (row['fr'] as String? ?? '').trim();
+      final sr = (row['sr'] as String? ?? '').trim();
+
+      if (num.isEmpty && fr.isEmpty && sr.isEmpty) continue;
+
+      final parts = <String>[];
+
+      if (num.isNotEmpty) parts.add(num);
+      if (fr.isNotEmpty) parts.add('FR ₹$fr');
+      if (sr.isNotEmpty) parts.add('${isTR ? 'TR' : 'SR'} ₹$sr');
+
+      return parts.join(' · ');
+    }
+
+    return 'Untitled token';
+  }
 
   bool _hasCurrentData() {
     return nameController.text.trim().isNotEmpty ||
@@ -97,20 +134,132 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     }
   }
 
-  // ================= AUTO-SAVE DRAFT =================
-
-  // Timer? _draftSaveTimer;
+  // // ================= AUTO-SAVE DRAFT =================
 
   void _scheduleDraftSave() {
     _draftSaveTimer?.cancel();
 
     if (!_hasCurrentData()) return;
 
-    _draftSaveTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted) {
+    _draftSaveTimer = Timer(const Duration(milliseconds: 600), () {
+      if (mounted && _hasCurrentData()) {
         _saveCurrentDraft();
       }
     });
+  }
+
+  // ================= AUTO-SAVE CURRENT TOKEN =================
+
+  void _scheduleWorkingSave() {
+    if (_restoringWorkingState) return;
+
+    _workingSaveTimer?.cancel();
+
+    _workingSaveTimer = Timer(const Duration(milliseconds: 400), () {
+      if (mounted) {
+        _saveWorkingState();
+      }
+    });
+  }
+
+  Future<void> _saveWorkingState() {
+    if (_restoringWorkingState) return Future<void>.value();
+
+    final rows = <Map<String, String>>[];
+
+    for (int i = 0; i < numControllers.length; i++) {
+      rows.add({
+        'num': numControllers[i].text,
+        'fr': frControllers[i].text,
+        'sr': srControllers[i].text,
+      });
+    }
+
+    final state = <String, dynamic>{
+      'name': nameController.text,
+      'isTRMode': isTRMode,
+      'rows': rows,
+      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+    };
+
+    final encodedState = jsonEncode(state);
+
+    _workingSaveQueue = _workingSaveQueue.then((_) async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_workingStateKey, encodedState);
+    });
+
+    return _workingSaveQueue;
+  }
+
+  Future<void> _restoreWorkingState(bool savedMode) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final saved = prefs.getString(_workingStateKey);
+
+    if (!mounted) return;
+
+    if (saved == null || saved.isEmpty) {
+      setState(() {
+        isTRMode = savedMode;
+        _modeLoaded = true;
+      });
+      return;
+    }
+
+    try {
+      final decoded = jsonDecode(saved) as Map<String, dynamic>;
+
+      final rows =
+          (decoded['rows'] as List<dynamic>? ?? [])
+              .map((item) => Map<String, dynamic>.from(item as Map))
+              .toList();
+
+      _restoringWorkingState = true;
+
+      // Ensure enough controllers exist to restore every saved row.
+      final requiredRows = (rows.length + 1).clamp(1, 200);
+
+      while (numControllers.length < requiredRows) {
+        addNewRow();
+      }
+
+      for (final controller in numControllers) {
+        controller.clear();
+      }
+
+      for (final controller in frControllers) {
+        controller.clear();
+      }
+
+      for (final controller in srControllers) {
+        controller.clear();
+      }
+
+      for (int i = 0; i < rows.length && i < numControllers.length; i++) {
+        numControllers[i].text = rows[i]['num'] as String? ?? '';
+        frControllers[i].text = rows[i]['fr'] as String? ?? '';
+        srControllers[i].text = rows[i]['sr'] as String? ?? '';
+      }
+
+      nameController.text = decoded['name'] as String? ?? '';
+
+      setState(() {
+        isTRMode = decoded['isTRMode'] as bool? ?? savedMode;
+        _modeLoaded = true;
+        amountRevision.value++;
+      });
+    } catch (_) {
+      // If the saved state is invalid, start with an empty list.
+      if (mounted) {
+        setState(() {
+          isTRMode = savedMode;
+          _modeLoaded = true;
+        });
+      }
+    } finally {
+      _restoringWorkingState = false;
+    }
   }
 
   @override
@@ -118,8 +267,11 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      _draftSaveTimer?.cancel();
-      _saveCurrentDraft();
+      // _draftSaveTimer?.cancel();
+      _workingSaveTimer?.cancel();
+
+      // _saveCurrentDraft();
+      _saveWorkingState();
     }
   }
   //===================Paste=========================
@@ -259,7 +411,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       if (parsedRows.length >= 200) break;
     }
 
-       if (parsedRows.isEmpty || !mounted) return;
+    if (parsedRows.isEmpty || !mounted) return;
 
     // Find the next available row after existing entries.
     int startIndex = numControllers.indexWhere(
@@ -293,7 +445,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       amountRevision.value++;
     });
 
-    _scheduleDraftSave();
+    _scheduleWorkingSave();
   }
 
   Future<void> _saveCurrentDraft() async {
@@ -341,6 +493,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     amountRevision.value++;
 
     if (mounted) setState(() {});
+    _scheduleWorkingSave();
   }
 
   Future<void> _createNewToken() async {
@@ -429,6 +582,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     });
 
     await _saveMode(isTRMode);
+    _scheduleWorkingSave();
   }
 
   Future<void> _showDrafts() async {
@@ -496,7 +650,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                               contentPadding: EdgeInsets.zero,
                               leading: const Icon(Icons.description_outlined),
                               title: Text(
-                                name.isEmpty ? 'Untitled token' : name,
+                                _getDraftTitle(draft),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -602,26 +756,13 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     if (!mounted) return;
 
-    setState(() {
-      isTRMode = savedMode;
-      _modeLoaded = true;
-    });
+    await _restoreWorkingState(savedMode);
   }
 
   Future<void> _saveMode(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('isTRMode', value);
   }
-
-  // @override
-  // void didChangeAppLifecycleState(AppLifecycleState state) {
-  //   if (state == AppLifecycleState.inactive ||
-  //       state == AppLifecycleState.paused ||
-  //       state == AppLifecycleState.detached) {
-  //     _draftSaveTimer?.cancel();
-  //     _saveCurrentDraft();
-  //   }
-  // }
 
   void handleBackspace(
     TextEditingController controller,
@@ -999,6 +1140,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _workingSaveQueue = Future<void>.value();
+
   Future<void> _confirmClearAll() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1041,6 +1184,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       // Keep the existing rows, but clear their contents.
       amountRevision.value++;
     });
+    _scheduleWorkingSave();
   }
   // ================= TOTAL LOGIC =================
 
@@ -1182,21 +1326,20 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
       // Refresh only the total/Continue area while text is being edited.
       amountRevision.value++;
-      _scheduleDraftSave();
+
+      _scheduleWorkingSave();
     });
 
     frController.addListener(() {
       amountRevision.value++;
-      _scheduleDraftSave();
+
+      _scheduleWorkingSave();
     });
 
     srController.addListener(() {
       amountRevision.value++;
-      _scheduleDraftSave();
-    });
 
-    srController.addListener(() {
-      amountRevision.value++;
+      _scheduleWorkingSave();
     });
 
     numControllers.add(numController);
@@ -1213,6 +1356,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   void removeRow(int index) {
     if (numControllers.length <= 1) return;
 
+    _numberWasEmpty.remove(numControllers[index]);
+
     numControllers[index].dispose();
     frControllers[index].dispose();
     srControllers[index].dispose();
@@ -1221,7 +1366,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     frFocusNodes[index].dispose();
     srFocusNodes[index].dispose();
 
-    _numberWasEmpty.remove(numControllers[index]);
     numControllers.removeAt(index);
     frControllers.removeAt(index);
     srControllers.removeAt(index);
@@ -1231,6 +1375,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     srFocusNodes.removeAt(index);
 
     setState(() {});
+    _scheduleWorkingSave();
   }
 
   bool isFirstFilled(int index) => numControllers[index].text.isNotEmpty;
@@ -1574,30 +1719,34 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    _draftSaveTimer?.cancel();
+    _workingSaveTimer?.cancel();
+
+    // Save the latest working list before disposing.
+    _saveWorkingState();
+
     WidgetsBinding.instance.removeObserver(this);
 
-    for (var c in numControllers) {
+    for (final c in numControllers) {
       c.dispose();
     }
 
-    for (var c in frControllers) {
+    for (final c in frControllers) {
       c.dispose();
     }
 
-    for (var c in srControllers) {
+    for (final c in srControllers) {
       c.dispose();
     }
 
-    for (var node in numFocusNodes) {
+    for (final node in numFocusNodes) {
       node.dispose();
     }
 
-    for (var node in frFocusNodes) {
+    for (final node in frFocusNodes) {
       node.dispose();
     }
 
-    for (var node in srFocusNodes) {
+    for (final node in srFocusNodes) {
       node.dispose();
     }
 
@@ -1624,7 +1773,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
           height: 40,
           child: TextField(
             controller: nameController,
-            onChanged: (_) => _scheduleDraftSave(),
+            onChanged: (_) {
+              _scheduleDraftSave();
+              _scheduleWorkingSave();
+            },
             textAlignVertical: TextAlignVertical.center,
             decoration: const InputDecoration(
               hintText: 'Enter name',
@@ -1648,6 +1800,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
                 await _saveMode(newMode);
                 _scheduleDraftSave();
+                _scheduleWorkingSave();
               },
               child: Text(
                 isTRMode ? 'TR' : 'FR, SR',
