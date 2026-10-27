@@ -319,19 +319,20 @@ class _SecondScreenState extends State<SecondScreen> {
 
   Widget _cell(String value, {bool isHeader = false}) {
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: isHeader ? 5 : 3, horizontal: 2),
+      padding: EdgeInsets.symmetric(vertical: isHeader ? 7 : 5, horizontal: 3),
       child: Text(
         value,
         textAlign: TextAlign.center,
         style: TextStyle(
           color: Colors.black,
-          fontSize: isHeader ? 13 : 14,
+          fontSize: isHeader ? 14 : 16,
           fontWeight:
               isHeader
-                  ? FontWeight.bold
+                  ? FontWeight.w700
                   : (value.isNotEmpty && !value.startsWith('₹') && value != 'X'
-                      ? FontWeight.w500
-                      : FontWeight.normal),
+                      ? FontWeight.w600
+                      : FontWeight.w500),
+          height: 1.2,
         ),
       ),
     );
@@ -536,9 +537,9 @@ class _SecondScreenState extends State<SecondScreen> {
     return Material(
       color: Colors.white,
       child: SizedBox(
-        width: 380,
+        width: 420,
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(14),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -550,7 +551,7 @@ class _SecondScreenState extends State<SecondScreen> {
                     child: Text(
                       widget.name,
                       style: const TextStyle(
-                        fontSize: 10,
+                        fontSize: 11,
                         color: Colors.black54,
                       ),
                     ),
@@ -559,7 +560,7 @@ class _SecondScreenState extends State<SecondScreen> {
                   Text(
                     formatDateTime(currentTime),
                     textAlign: TextAlign.right,
-                    style: const TextStyle(fontSize: 10, color: Colors.black54),
+                    style: const TextStyle(fontSize: 11, color: Colors.black54),
                   ),
                 ],
               ),

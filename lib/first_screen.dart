@@ -18,11 +18,18 @@ class FirstScreen extends StatefulWidget {
 class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   bool isTRMode = false;
   bool _modeLoaded = false;
-  Timer? _draftSaveTimer;
 
   Timer? _workingSaveTimer;
 
   static const String _workingStateKey = 'token_taker_current_working_state';
+  // Add these colors inside _FirstScreenState.
+  // White/gray number boxes, clean amount fields, and a blue accent.
+
+  static const Color _pageColor = Color(0xFFF5F6F8);
+
+  static const Color _primaryColor = Color(0xFF2878D0);
+  static const Color _borderColor = Color(0xFFD5D9E0);
+  static const Color _textColor = Color(0xFF202733);
 
   bool _restoringWorkingState = false;
 
@@ -38,8 +45,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   final ValueNotifier<int> amountRevision = ValueNotifier<int>(0);
 
   final TextEditingController nameController = TextEditingController();
-
-  // ================= DRAFTS =================
 
   static const String _draftsKey = 'token_taker_drafts';
 
@@ -97,12 +102,23 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       }
     }
 
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final existingIndex = _drafts.indexWhere((draft) => draft['id'] == id);
+
+    final createdAt =
+        existingIndex >= 0
+            ? (_drafts[existingIndex]['createdAt'] as int? ??
+                _drafts[existingIndex]['updatedAt'] as int? ??
+                now)
+            : now;
+
     return {
       'id': id,
       'name': nameController.text,
       'isTRMode': isTRMode,
       'rows': rows,
-      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+      'createdAt': createdAt,
+      'updatedAt': now,
     };
   }
 
@@ -132,20 +148,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     } catch (_) {
       // Ignore invalid draft data rather than crashing the app.
     }
-  }
-
-  // // ================= AUTO-SAVE DRAFT =================
-
-  void _scheduleDraftSave() {
-    _draftSaveTimer?.cancel();
-
-    if (!_hasCurrentData()) return;
-
-    _draftSaveTimer = Timer(const Duration(milliseconds: 600), () {
-      if (mounted && _hasCurrentData()) {
-        _saveCurrentDraft();
-      }
-    });
   }
 
   // ================= AUTO-SAVE CURRENT TOKEN =================
@@ -267,10 +269,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      // _draftSaveTimer?.cancel();
       _workingSaveTimer?.cancel();
 
-      // _saveCurrentDraft();
       _saveWorkingState();
     }
   }
@@ -293,8 +293,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       r'^(?:\d{2}|\d[HE]|\d{2}V|AP|HP)$',
       caseSensitive: false,
     );
-
-    // final separators = RegExp(r'[-+@_=/*\s:]+');
 
     for (final line in text.split(RegExp(r'\r?\n'))) {
       final trimmed = line.trim();
@@ -592,6 +590,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     if (!mounted) return;
 
+    final Set<String> selectedDraftIds = {};
+
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
@@ -599,10 +599,16 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
           builder: (context, setDialogState) {
             final sortedDrafts = List<Map<String, dynamic>>.from(_drafts)
               ..sort((a, b) {
-                final aTime = a['updatedAt'] as int? ?? 0;
-                final bTime = b['updatedAt'] as int? ?? 0;
+                final aTime =
+                    a['createdAt'] as int? ?? a['updatedAt'] as int? ?? 0;
+                final bTime =
+                    b['createdAt'] as int? ?? b['updatedAt'] as int? ?? 0;
+
+                // Newest first; oldest remains at the bottom.
                 return bTime.compareTo(aTime);
               });
+
+            final isSelecting = selectedDraftIds.isNotEmpty;
 
             return AlertDialog(
               title: Row(
@@ -630,10 +636,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                           separatorBuilder: (_, __) => const Divider(height: 1),
                           itemBuilder: (context, index) {
                             final draft = sortedDrafts[index];
+                            final id = draft['id'] as String;
                             final rows = draft['rows'] as List<dynamic>? ?? [];
-
-                            final name =
-                                (draft['name'] as String? ?? '').trim();
+                            final selected = selectedDraftIds.contains(id);
 
                             final date = DateTime.fromMillisecondsSinceEpoch(
                               draft['updatedAt'] as int? ?? 0,
@@ -647,8 +652,13 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                                 '${date.minute.toString().padLeft(2, '0')}';
 
                             return ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              leading: const Icon(Icons.description_outlined),
+                              selected: selected,
+                              leading: Icon(
+                                selected
+                                    ? Icons.check_circle
+                                    : Icons.description_outlined,
+                                color: selected ? Colors.blue : null,
+                              ),
                               title: Text(
                                 _getDraftTitle(draft),
                                 maxLines: 1,
@@ -657,76 +667,94 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                               subtitle: Text(
                                 '${rows.length} entries • $dateText',
                               ),
+                              onLongPress: () {
+                                setDialogState(() {
+                                  if (selected) {
+                                    selectedDraftIds.remove(id);
+                                  } else {
+                                    selectedDraftIds.add(id);
+                                  }
+                                });
+                              },
                               onTap: () async {
+                                if (isSelecting) {
+                                  setDialogState(() {
+                                    if (selected) {
+                                      selectedDraftIds.remove(id);
+                                    } else {
+                                      selectedDraftIds.add(id);
+                                    }
+                                  });
+                                  return;
+                                }
+
                                 Navigator.pop(dialogContext);
                                 await _openDraft(draft);
                               },
-                              trailing: IconButton(
-                                tooltip: 'Delete draft',
-                                icon: const Icon(
-                                  Icons.delete_outline,
-                                  color: Colors.red,
-                                ),
-                                onPressed: () async {
-                                  final confirm = await showDialog<bool>(
-                                    context: context,
-                                    builder:
-                                        (confirmContext) => AlertDialog(
-                                          title: const Text('Delete draft?'),
-                                          content: Text(
-                                            'Delete "${name.isEmpty ? 'Untitled token' : name}"?',
-                                          ),
-                                          actions: [
-                                            TextButton(
-                                              onPressed:
-                                                  () => Navigator.pop(
-                                                    confirmContext,
-                                                    false,
-                                                  ),
-                                              child: const Text('Cancel'),
-                                            ),
-                                            TextButton(
-                                              onPressed:
-                                                  () => Navigator.pop(
-                                                    confirmContext,
-                                                    true,
-                                                  ),
-                                              child: const Text(
-                                                'Delete',
-                                                style: TextStyle(
-                                                  color: Colors.red,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                  );
-
-                                  if (confirm != true) return;
-
-                                  final id = draft['id'];
-
-                                  _drafts.removeWhere(
-                                    (item) => item['id'] == id,
-                                  );
-
-                                  if (_activeDraftId == id) {
-                                    _activeDraftId = null;
-                                  }
-
-                                  await _persistDrafts();
-
-                                  if (!mounted) return;
-
-                                  setDialogState(() {});
-                                  setState(() {});
-                                },
-                              ),
                             );
                           },
                         ),
               ),
               actions: [
+                if (isSelecting)
+                  TextButton.icon(
+                    onPressed: () async {
+                      final count = selectedDraftIds.length;
+
+                      final confirmed = await showDialog<bool>(
+                        context: dialogContext,
+                        builder:
+                            (confirmContext) => AlertDialog(
+                              title: const Text('Delete drafts?'),
+                              content: Text(
+                                'Delete $count selected '
+                                '${count == 1 ? 'draft' : 'drafts'}? '
+                                'This cannot be undone.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed:
+                                      () =>
+                                          Navigator.pop(confirmContext, false),
+                                  child: const Text('Cancel'),
+                                ),
+                                TextButton(
+                                  onPressed:
+                                      () => Navigator.pop(confirmContext, true),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: Colors.red,
+                                  ),
+                                  child: const Text('Delete'),
+                                ),
+                              ],
+                            ),
+                      );
+
+                      if (confirmed != true) return;
+
+                      final idsToDelete = Set<String>.from(selectedDraftIds);
+
+                      _drafts.removeWhere(
+                        (draft) => idsToDelete.contains(draft['id']),
+                      );
+
+                      if (_activeDraftId != null &&
+                          idsToDelete.contains(_activeDraftId)) {
+                        _activeDraftId = null;
+                      }
+
+                      await _persistDrafts();
+
+                      if (!mounted) return;
+
+                      selectedDraftIds.clear();
+                      setDialogState(() {});
+                      setState(() {});
+                    },
+                    icon: const Icon(Icons.delete_outline),
+                    label: Text('Delete (${selectedDraftIds.length})'),
+                    style: TextButton.styleFrom(foregroundColor: Colors.red),
+                  ),
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext),
                   child: const Text('Close'),
@@ -1004,6 +1032,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     ValueChanged<String>? onSubmitted,
     TextInputAction textInputAction = TextInputAction.next,
   }) {
+    final isNumber = fieldType == 'num';
+
     return SizedBox(
       width: width,
       child: Focus(
@@ -1024,19 +1054,48 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
           keyboardType: keyboardType,
           textInputAction: textInputAction,
           textAlign: textAlign,
-          style:
-              fieldType == 'num'
-                  ? const TextStyle(fontWeight: FontWeight.w500)
-                  : null,
+          style: TextStyle(
+            fontSize: isNumber ? 19 : 20,
+            fontWeight: isNumber ? FontWeight.w600 : FontWeight.w500,
+            color: enabled ? _textColor : Colors.grey.shade400,
+          ),
           inputFormatters: inputFormatters,
           onChanged: onChanged,
           onEditingComplete: onEditingComplete,
           onSubmitted: onSubmitted,
           decoration: decoration.copyWith(
+            filled: true,
+            fillColor:
+                !enabled
+                    ? const Color(0xFFF8F9FB)
+                    : rowIndex.isEven
+                    ? Colors.white
+                    : const Color(0xFFF0F0F0),
             isDense: true,
             contentPadding: const EdgeInsets.symmetric(
-              // horizontal: 8,
-              vertical: 3,
+              horizontal: 5,
+              vertical: 6,
+            ),
+            prefixStyle: const TextStyle(
+              fontSize: 19,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFF656D78),
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(9),
+              borderSide: const BorderSide(color: _borderColor, width: 1),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(9),
+              borderSide: const BorderSide(color: _borderColor, width: 1),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(9),
+              borderSide: const BorderSide(color: _primaryColor, width: 1.7),
+            ),
+            disabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(9),
+              borderSide: const BorderSide(color: Color(0xFFE7E9ED), width: 1),
             ),
           ),
         ),
@@ -1149,7 +1208,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
           (dialogContext) => AlertDialog(
             title: const Text('Clear all?'),
             content: const Text(
-              'Are you sure you want to clear all entered data?',
+              'Clear all entered data and remove the extra blank rows? '
+              'Your saved drafts will not be deleted.',
             ),
             actions: [
               TextButton(
@@ -1159,7 +1219,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
                 style: TextButton.styleFrom(foregroundColor: Colors.red),
-                child: const Text('OK'),
+                child: const Text('Clear All'),
               ),
             ],
           ),
@@ -1167,24 +1227,74 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     if (confirmed != true || !mounted) return;
 
+    // Cancel any pending auto-save.
+    _workingSaveTimer?.cancel();
+
     setState(() {
+      // Dispose all existing controllers and focus nodes.
       for (final controller in numControllers) {
         _numberWasEmpty.remove(controller);
-        controller.clear();
+        controller.dispose();
       }
 
       for (final controller in frControllers) {
-        controller.clear();
+        controller.dispose();
       }
 
       for (final controller in srControllers) {
-        controller.clear();
+        controller.dispose();
       }
 
-      // Keep the existing rows, but clear their contents.
+      for (final node in numFocusNodes) {
+        node.dispose();
+      }
+
+      for (final node in frFocusNodes) {
+        node.dispose();
+      }
+
+      for (final node in srFocusNodes) {
+        node.dispose();
+      }
+
+      // Remove all rows and focus nodes.
+      numControllers.clear();
+      frControllers.clear();
+      srControllers.clear();
+
+      numFocusNodes.clear();
+      frFocusNodes.clear();
+      srFocusNodes.clear();
+
+      // Reset the current token.
+      nameController.clear();
+      warnedDuplicateRows.clear();
+      _activeDraftId = null;
+
+      // Create exactly one fresh row.
+      addNewRow();
+
+      // Refresh total and Continue button.
       amountRevision.value++;
     });
-    _scheduleWorkingSave();
+
+    // Save the fresh state so reopening the app keeps it blank.
+    await _saveWorkingState();
+
+    if (!mounted) return;
+
+    hideKeyboard();
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('All cleared. Fresh token ready.'),
+          duration: Duration(seconds: 1),
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.only(left: 12, right: 12, bottom: 60),
+        ),
+      );
   }
   // ================= TOTAL LOGIC =================
 
@@ -1378,7 +1488,14 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     _scheduleWorkingSave();
   }
 
-  bool isFirstFilled(int index) => numControllers[index].text.isNotEmpty;
+  bool isFirstFilled(int index) {
+    final value = numControllers[index].text.trim().toUpperCase();
+
+    return RegExp(r'^\d{2}$').hasMatch(value) ||
+        RegExp(r'^\d[HE]$').hasMatch(value) ||
+        value == 'AP' ||
+        value == 'HP';
+  }
 
   bool isNumEnabled(int index) {
     return true;
@@ -1546,174 +1663,135 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   // ================= UI =================
 
   Widget buildRow(int index) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        const numWidth = 60.0;
+    const double numWidth = 76;
+    const double gap = 8;
 
-        const gap = 8.0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: numWidth,
+            child: spaceAwareField(
+              controller: numControllers[index],
+              focusNode: numFocusNodes[index],
+              rowIndex: index,
+              fieldType: 'num',
+              width: numWidth,
+              enabled: isNumEnabled(index),
+              keyboardType: TextInputType.text,
+              inputFormatters: [
+                LengthLimitingTextInputFormatter(4),
+                TextInputFormatter.withFunction((oldValue, newValue) {
+                  final text = newValue.text.toUpperCase();
+                  final value = TextEditingValue(
+                    text: text,
+                    selection: newValue.selection,
+                  );
 
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(
-            children: [
-              SizedBox(
-                width: numWidth,
-                child: spaceAwareField(
-                  controller: numControllers[index],
-                  focusNode: numFocusNodes[index],
-                  rowIndex: index,
-                  fieldType: 'num',
-                  width: numWidth,
-                  enabled: isNumEnabled(index),
-                  keyboardType: TextInputType.text,
-                  inputFormatters: [
-                    LengthLimitingTextInputFormatter(4),
-                    TextInputFormatter.withFunction((oldValue, newValue) {
-                      final text = newValue.text.toUpperCase();
-                      final value = TextEditingValue(
-                        text: text,
-                        selection: newValue.selection,
-                      );
+                  if (text.isEmpty || text.endsWith(' ')) {
+                    return value;
+                  }
 
-                      if (text.isEmpty) return value;
+                  if (RegExp(r'^[0-9]$').hasMatch(text) ||
+                      RegExp(r'^[AH]$').hasMatch(text) ||
+                      text == 'AP' ||
+                      text == 'HP' ||
+                      RegExp(r'^[0-9]{2}$').hasMatch(text) ||
+                      RegExp(r'^[0-9][HE]$').hasMatch(text) ||
+                      RegExp(r'^[0-9]{2}V$').hasMatch(text)) {
+                    return value;
+                  }
 
-                      if (text.endsWith(' ')) {
-                        return value;
-                      }
-
-                      if (RegExp(r'^[0-9]$').hasMatch(text) ||
-                          RegExp(r'^[AH]$').hasMatch(text) ||
-                          text == 'AP' ||
-                          text == 'HP' ||
-                          RegExp(r'^[0-9]{2}$').hasMatch(text) ||
-                          RegExp(r'^[0-9][HE]$').hasMatch(text) ||
-                          RegExp(r'^[0-9]{2}V$').hasMatch(text)) {
-                        return value;
-                      }
-
-                      return oldValue;
-                    }),
-                  ],
-                  onChanged: (val) {
-                    final value = val.trim().toUpperCase();
-
-                    if (value.length >= 2 && isValidCompletedNumber(value)) {
-                      checkDuplicateNumber(value, index);
-                    } else {
-                      warnedDuplicateRows.remove(index);
-                    }
-
-                    if (val.endsWith(' ')) {
-                      handleSpaceInput(
-                        numControllers[index],
-                        val,
-                        index,
-                        'num',
-                      );
-                    }
-
-                    if (val.isEmpty) {
-                      compactRowsAfterDelete(index);
-                    }
-                  },
-                  onSubmitted: (_) {
-                    final value =
-                        numControllers[index].text.trim().toUpperCase();
-
-                    if (!isValidCompletedNumber(value)) return;
-
-                    checkDuplicateNumber(value, index);
-                    moveToNextAmount(index, 'num');
-                  },
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-
-              const SizedBox(width: gap),
-
-              if (!isTRMode) ...[
-                Expanded(
-                  child: spaceAwareField(
-                    controller: frControllers[index],
-                    focusNode: frFocusNodes[index],
-                    rowIndex: index,
-                    fieldType: 'fr',
-                    width: double.infinity,
-                    enabled: isFirstFilled(index),
-                    keyboardType: TextInputType.text,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'[0-9Kk ]')),
-                      LengthLimitingTextInputFormatter(5),
-                    ],
-                    onChanged: (val) {
-                      if (val.endsWith(' ')) {
-                        handleSpaceInput(
-                          frControllers[index],
-                          val,
-                          index,
-                          'fr',
-                        );
-                      } else {
-                        handleAmountWithK(
-                          frControllers[index],
-                          val,
-                          index,
-                          true,
-                        );
-                      }
-                    },
-                    onSubmitted: (_) {
-                      moveToNextAmount(index, 'fr');
-                    },
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      prefixText: '₹ ',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: gap),
+                  return oldValue;
+                }),
               ],
+              onChanged: (val) {
+                final value = val.trim().toUpperCase();
 
-              Expanded(
-                child: spaceAwareField(
-                  controller: srControllers[index],
-                  focusNode: srFocusNodes[index],
-                  rowIndex: index,
-                  fieldType: 'sr',
-                  width: double.infinity,
-                  enabled: isFirstFilled(index),
-                  keyboardType: TextInputType.text,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'[0-9Kk ]')),
-                    LengthLimitingTextInputFormatter(5),
-                  ],
-                  onChanged: (val) {
-                    if (val.endsWith(' ')) {
-                      handleSpaceInput(srControllers[index], val, index, 'sr');
-                    } else {
-                      handleAmountWithK(
-                        srControllers[index],
-                        val,
-                        index,
-                        false,
-                      );
-                    }
-                  },
-                  onSubmitted: (_) {
-                    moveToNextAmount(index, isTRMode ? 'tr' : 'sr');
-                  },
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    prefixText: '₹ ',
-                  ),
-                ),
-              ),
-            ],
+                if (value.length >= 2 && isValidCompletedNumber(value)) {
+                  checkDuplicateNumber(value, index);
+                } else {
+                  warnedDuplicateRows.remove(index);
+                }
+
+                if (val.endsWith(' ')) {
+                  handleSpaceInput(numControllers[index], val, index, 'num');
+                }
+
+                if (val.isEmpty) {
+                  compactRowsAfterDelete(index);
+                }
+              },
+              onSubmitted: (_) {
+                final value = numControllers[index].text.trim().toUpperCase();
+
+                if (!isValidCompletedNumber(value)) return;
+
+                checkDuplicateNumber(value, index);
+                moveToNextAmount(index, 'num');
+              },
+              decoration: const InputDecoration(),
+            ),
           ),
-        );
-      },
+
+          const SizedBox(width: gap),
+
+          if (!isTRMode) ...[
+            Expanded(
+              child: spaceAwareField(
+                controller: frControllers[index],
+                focusNode: frFocusNodes[index],
+                rowIndex: index,
+                fieldType: 'fr',
+                width: double.infinity,
+                enabled: isFirstFilled(index),
+                keyboardType: TextInputType.text,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[0-9Kk ]')),
+                  LengthLimitingTextInputFormatter(5),
+                ],
+                onChanged: (val) {
+                  if (val.endsWith(' ')) {
+                    handleSpaceInput(frControllers[index], val, index, 'fr');
+                  } else {
+                    handleAmountWithK(frControllers[index], val, index, true);
+                  }
+                },
+                onSubmitted: (_) => moveToNextAmount(index, 'fr'),
+                decoration: const InputDecoration(prefixText: '₹ '),
+              ),
+            ),
+            const SizedBox(width: gap),
+          ],
+
+          Expanded(
+            child: spaceAwareField(
+              controller: srControllers[index],
+              focusNode: srFocusNodes[index],
+              rowIndex: index,
+              fieldType: 'sr',
+              width: double.infinity,
+              enabled: isFirstFilled(index),
+              keyboardType: TextInputType.text,
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9Kk ]')),
+                LengthLimitingTextInputFormatter(5),
+              ],
+              onChanged: (val) {
+                if (val.endsWith(' ')) {
+                  handleSpaceInput(srControllers[index], val, index, 'sr');
+                } else {
+                  handleAmountWithK(srControllers[index], val, index, false);
+                }
+              },
+              onSubmitted:
+                  (_) => moveToNextAmount(index, isTRMode ? 'tr' : 'sr'),
+              decoration: const InputDecoration(prefixText: '₹ '),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1765,18 +1843,18 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     final sortedIndexes = getSortedRowIndexes();
 
     return Scaffold(
-      // Explicitly move the footer above the keyboard when it opens.
       resizeToAvoidBottomInset: true,
+      backgroundColor: _pageColor,
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
         title: SizedBox(
           width: 150,
           height: 40,
           child: TextField(
             controller: nameController,
-            onChanged: (_) {
-              _scheduleDraftSave();
-              _scheduleWorkingSave();
-            },
             textAlignVertical: TextAlignVertical.center,
             decoration: const InputDecoration(
               hintText: 'Enter name',
@@ -1786,7 +1864,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
             ),
           ),
         ),
-
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12),
@@ -1799,12 +1876,23 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                 });
 
                 await _saveMode(newMode);
-                _scheduleDraftSave();
                 _scheduleWorkingSave();
               },
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _primaryColor,
+                backgroundColor: const Color(0xFFF1F6FD),
+                side: const BorderSide(color: Color(0xFFD5E4F8)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+              ),
               child: Text(
                 isTRMode ? 'TR' : 'FR, SR',
-                style: const TextStyle(fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
@@ -1813,47 +1901,57 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.only(top: 10, bottom: 0),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 5),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const SizedBox(
-                  width: 60,
+                  width: 76,
                   child: Center(
                     child: Text(
-                      'Num',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 15),
-                if (!isTRMode) ...[
-                  const SizedBox(
-                    width: 100,
-                    child: Center(
-                      child: Text(
-                        'FR',
-                        style: TextStyle(fontWeight: FontWeight.bold),
+                      'NUM',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1,
+                        color: Color(0xFF687282),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 15),
-                ] else
-                  const SizedBox(width: 115),
-                const SizedBox(width: 15),
-                SizedBox(
-                  width: 100,
+                ),
+                const SizedBox(width: 8),
+                if (!isTRMode) ...[
+                  Expanded(
+                    child: Center(
+                      child: Text(
+                        'FR',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1,
+                          color: Color(0xFF687282),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
                   child: Center(
                     child: Text(
                       isTRMode ? 'TR' : 'SR',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1,
+                        color: Color(0xFF687282),
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 50),
               ],
             ),
           ),
+
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1866,15 +1964,13 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
             valueListenable: amountRevision,
             builder: (context, _, child) {
               return Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 decoration: const BoxDecoration(
-                  border: Border(top: BorderSide(color: Colors.grey)),
+                  color: Colors.white,
+                  border: Border(top: BorderSide(color: Color(0xFFE0E3E8))),
                 ),
                 child: SizedBox(
-                  height: 44,
+                  height: 46,
                   child: Row(
                     children: [
                       // Gallery
