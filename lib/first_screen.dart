@@ -1734,7 +1734,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
               onSubmitted: (_) {
                 final value = numControllers[index].text.trim().toUpperCase();
 
-                if (!isValidCompletedNumber(value)) return;
+                if (!isValidCompletedNumber(value)) {
+                  FocusScope.of(context).requestFocus(numFocusNodes[index]);
+                  return;
+                }
 
                 checkDuplicateNumber(value, index);
                 moveToNextAmount(index, 'num');
