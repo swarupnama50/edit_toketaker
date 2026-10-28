@@ -122,6 +122,43 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     };
   }
 
+  int _todayReceiptCount = 0;
+
+  Future<void> _loadTodayReceiptCount() async {
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final directory = Directory('${appDir.path}/saved_receipts');
+
+      if (!await directory.exists()) {
+        if (mounted) {
+          setState(() => _todayReceiptCount = 0);
+        }
+        return;
+      }
+
+      final now = DateTime.now();
+      int count = 0;
+
+      for (final file in directory.listSync().whereType<File>()) {
+        if (!file.path.toLowerCase().endsWith('.jpg')) continue;
+
+        final modified = file.lastModifiedSync();
+
+        if (modified.year == now.year &&
+            modified.month == now.month &&
+            modified.day == now.day) {
+          count++;
+        }
+      }
+
+      if (mounted) {
+        setState(() => _todayReceiptCount = count);
+      }
+    } catch (e) {
+      debugPrint('Could not count today receipts: $e');
+    }
+  }
+
   Future<void> _persistDrafts() async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -782,6 +819,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     addNewRow();
     _loadMode();
     _loadDrafts();
+    _loadTodayReceiptCount();
   }
 
   Future<void> _loadMode() async {
@@ -1044,7 +1082,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       width: width,
       child: Focus(
         onKeyEvent: (node, event) {
-          if (event is KeyDownEvent &&
+          if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
               event.logicalKey == LogicalKeyboardKey.backspace &&
               controller.text.isEmpty) {
             handleBackspace(controller, rowIndex, fieldType);
@@ -1159,50 +1197,30 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openSavedReceipts() async {
-    try {
-      final appDir = await getApplicationDocumentsDirectory();
-      final directory = Directory('${appDir.path}/saved_receipts');
+    final appDir = await getApplicationDocumentsDirectory();
+    final directory = Directory('${appDir.path}/saved_receipts');
 
-      if (!await directory.exists()) {
-        await directory.create(recursive: true);
-      }
+    if (!await directory.exists()) return;
+    if (!mounted) return;
 
-      final receipts =
-          directory
-              .listSync()
-              .whereType<File>()
-              .where((file) => file.path.toLowerCase().endsWith('.jpg'))
-              .toList();
+    final receipts =
+        directory
+            .listSync()
+            .whereType<File>()
+            .where((file) => file.path.toLowerCase().endsWith('.jpg'))
+            .toList();
 
-      receipts.sort(
-        (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()),
-      );
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SavedReceiptsScreen(receipts: receipts),
+      ),
+    );
 
-      if (!mounted) return;
+    if (!mounted) return;
 
-      hideKeyboard();
-
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => SavedReceiptsScreen(receipts: receipts),
-        ),
-      );
-
-      if (!mounted) return;
-
-      hideKeyboard();
-    } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not load saved tokens: $e'),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.only(left: 12, right: 12, bottom: 60),
-        ),
-      );
-    }
+    await _loadTodayReceiptCount();
+    hideKeyboard();
   }
 
   Future<void> _workingSaveQueue = Future<void>.value();
@@ -1636,36 +1654,52 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   // ================= NEXT SCREEN =================
 
-  void goToNextScreen() {
-    List<Map<String, String>> data = [];
+  Future<void> goToNextScreen() async {
+    if (!canProceed()) return;
+
+    final List<Map<String, String>> data = [];
 
     for (int i = 0; i < numControllers.length; i++) {
-      if (numControllers[i].text.isNotEmpty) {
+      final num = numControllers[i].text.trim();
+
+      if (num.isNotEmpty) {
         data.add({
-          "num": numControllers[i].text,
-          "fr": frControllers[i].text.isEmpty ? "Nil" : frControllers[i].text,
-          "sr": srControllers[i].text.isEmpty ? "Nil" : srControllers[i].text,
+          'num': num,
+          'fr':
+              frControllers[i].text.trim().isEmpty
+                  ? 'Nil'
+                  : frControllers[i].text.trim(),
+          'sr':
+              srControllers[i].text.trim().isEmpty
+                  ? 'Nil'
+                  : srControllers[i].text.trim(),
         });
       }
     }
 
+    if (data.isEmpty) return;
+
     hideKeyboard();
 
-    Navigator.push(
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder:
-            (_) => SecondScreen(
+            (context) => SecondScreen(
               data: data,
               name: nameController.text.trim(),
               isTRMode: isTRMode,
             ),
       ),
-    ).then((_) {
-      if (!mounted) return;
+    );
 
-      hideKeyboard();
-    });
+    if (!mounted) return;
+
+    await _loadTodayReceiptCount();
+
+    if (!mounted) return;
+
+    hideKeyboard();
   }
 
   // ================= UI =================
@@ -1989,7 +2023,37 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                         child: IconButton(
                           tooltip: 'Saved tokens',
                           onPressed: _openSavedReceipts,
-                          icon: const Icon(Icons.photo_library_outlined),
+                          icon: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              const Icon(Icons.photo_library_outlined),
+                              if (_todayReceiptCount > 0)
+                                Positioned(
+                                  right: -9,
+                                  top: -7,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(3),
+                                    constraints: const BoxConstraints(
+                                      minWidth: 17,
+                                      minHeight: 17,
+                                    ),
+                                    decoration: const BoxDecoration(
+                                      color: Colors.red,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Text(
+                                      '$_todayReceiptCount',
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
                           iconSize: 25,
                           padding: EdgeInsets.zero,
                         ),

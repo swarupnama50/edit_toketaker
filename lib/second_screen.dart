@@ -52,6 +52,24 @@ class _SecondScreenState extends State<SecondScreen> {
 
   List<File> _savedReceipts = [];
 
+  int get _todayReceiptCount {
+    final now = DateTime.now();
+
+    return _savedReceipts.where((file) {
+      try {
+        if (!file.existsSync()) return false;
+
+        final modified = file.lastModifiedSync();
+
+        return modified.year == now.year &&
+            modified.month == now.month &&
+            modified.day == now.day;
+      } catch (_) {
+        return false;
+      }
+    }).length;
+  }
+
   Future<Directory> _getReceiptsDirectory() async {
     final appDir = await getApplicationDocumentsDirectory();
     final directory = Directory('${appDir.path}/saved_receipts');
@@ -130,13 +148,17 @@ class _SecondScreenState extends State<SecondScreen> {
     );
   }
 
-  void _showSavedReceipts() {
-    Navigator.push(
+  Future<void> _showSavedReceipts() async {
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => SavedReceiptsScreen(receipts: _savedReceipts),
       ),
     );
+
+    if (!mounted) return;
+
+    await _loadSavedReceipts();
   }
 
   bool _isBusy = false;
@@ -744,7 +766,37 @@ class _SecondScreenState extends State<SecondScreen> {
               IconButton(
                 tooltip: 'Saved receipts',
                 onPressed: _showSavedReceipts,
-                icon: const Icon(Icons.photo_library_outlined),
+                icon: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    const Icon(Icons.photo_library_outlined),
+                    if (_todayReceiptCount > 0)
+                      Positioned(
+                        right: -9,
+                        top: -7,
+                        child: Container(
+                          padding: const EdgeInsets.all(3),
+                          constraints: const BoxConstraints(
+                            minWidth: 17,
+                            minHeight: 17,
+                          ),
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            '$_todayReceiptCount',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
                 iconSize: 28,
               ),
 
