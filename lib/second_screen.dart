@@ -28,6 +28,23 @@ class SecondScreen extends StatefulWidget {
 }
 
 class _SecondScreenState extends State<SecondScreen> {
+  Color _currentReceiptBackground = Colors.white;
+  Color _receiptBackground(int index) {
+    const colors = [
+      Color(0xFFE3F2FD), // Light blue
+      Color(0xFFE8F5E9), // Light green
+      Color(0xFFFFF9C4), // Light yellow
+      Color(0xFFEDE7F6), // Light purple
+      Color(0xFFE0F7FA), // Light cyan
+      Color(0xFFFFE0B2), // Light orange
+      Color(0xFFFCE4EC), // Light pink
+      Color(0xFFE8EAF6), // Light indigo
+      Color(0xFFF1F8E9), // Light lime
+    ];
+
+    return colors[index % colors.length];
+  }
+
   late Timer timer;
   DateTime currentTime = DateTime.now();
 
@@ -461,6 +478,22 @@ class _SecondScreenState extends State<SecondScreen> {
     setState(() => _isBusy = true);
 
     try {
+      final directory = await _getReceiptsDirectory();
+
+      final existingFiles =
+          directory
+              .listSync()
+              .whereType<File>()
+              .where((file) => file.path.toLowerCase().endsWith('.jpg'))
+              .length;
+
+      // Choose the background before capturing the receipt.
+      setState(() {
+        _currentReceiptBackground = _receiptBackground(existingFiles);
+      });
+
+      await WidgetsBinding.instance.endOfFrame;
+
       final pngBytes = await _captureReceiptPng();
 
       if (pngBytes == null) {
@@ -475,9 +508,11 @@ class _SecondScreenState extends State<SecondScreen> {
         return;
       }
 
+      // The background is already part of the captured receipt.
       final jpgBytes = Uint8List.fromList(
         img.encodeJpg(decodedImage, quality: 95),
       );
+
       final now = DateTime.now();
 
       String two(int n) => n.toString().padLeft(2, '0');
@@ -489,16 +524,12 @@ class _SecondScreenState extends State<SecondScreen> {
           '${two(now.day)}-${two(now.month)}-${two(now.year % 100)}_'
           '${two(hour12)}-${two(now.minute)}-${two(now.second)}_$period.jpg';
 
-      // Save a permanent copy for access inside the app.
-      final directory = await _getReceiptsDirectory();
       final file = File('${directory.path}/$fileName');
 
       await file.writeAsBytes(jpgBytes, flush: true);
 
-      // Refresh the saved receipt list.
       await _loadSavedReceipts();
 
-      // Also save the receipt to the phone gallery.
       bool hasAccess = await Gal.hasAccess();
 
       if (!hasAccess) {
@@ -535,7 +566,7 @@ class _SecondScreenState extends State<SecondScreen> {
     final totalAmount = getTotalAmount();
 
     return Material(
-      color: Colors.white,
+      color: _currentReceiptBackground,
       child: SizedBox(
         width: 420,
         child: Padding(

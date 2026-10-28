@@ -312,6 +312,12 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       var num = match.group(1)!.toUpperCase();
       var remainder = trimmed.substring(match.end);
 
+      // Reject 1520, but allow 15 20 and 15v20.
+      if (RegExp(r'^\d{2}$').hasMatch(num) &&
+          RegExp(r'^\d').hasMatch(remainder)) {
+        continue;
+      }
+
       // Recognize suffix words either directly after the number
       // or after separators, such as 23==velu==20 and 6==house==10.
       final suffixMatch = RegExp(

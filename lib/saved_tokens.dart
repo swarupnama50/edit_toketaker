@@ -234,6 +234,7 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
             }
           },
           child: Card(
+            color: Colors.white,
             clipBehavior: Clip.antiAlias,
             child: Stack(
               fit: StackFit.expand,
