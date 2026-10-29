@@ -22,6 +22,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   Timer? _workingSaveTimer;
 
   static const String _workingStateKey = 'token_taker_current_working_state';
+  static const String _lastGalleryViewedKey = 'token_taker_last_gallery_viewed';
   // Add these colors inside _FirstScreenState.
   // White/gray number boxes, clean amount fields, and a blue accent.
 
@@ -29,7 +30,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   static const Color _primaryColor = Color(0xFF2878D0);
   static const Color _borderColor = Color(0xFFD5D9E0);
-  static const Color _textColor = Color(0xFF202733);
 
   bool _restoringWorkingState = false;
 
@@ -126,36 +126,40 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   Future<void> _loadTodayReceiptCount() async {
     try {
+      final prefs = await SharedPreferences.getInstance();
+
+      int? lastViewed = prefs.getInt(_lastGalleryViewedKey);
+
+      // First launch: don't count receipts saved before this feature.
+      if (lastViewed == null) {
+        lastViewed = DateTime.now().millisecondsSinceEpoch;
+        await prefs.setInt(_lastGalleryViewedKey, lastViewed);
+      }
+
       final appDir = await getApplicationDocumentsDirectory();
       final directory = Directory('${appDir.path}/saved_receipts');
 
-      if (!await directory.exists()) {
-        if (mounted) {
-          setState(() => _todayReceiptCount = 0);
-        }
-        return;
-      }
-
-      final now = DateTime.now();
       int count = 0;
 
-      for (final file in directory.listSync().whereType<File>()) {
-        if (!file.path.toLowerCase().endsWith('.jpg')) continue;
+      if (await directory.exists()) {
+        for (final file in directory.listSync().whereType<File>()) {
+          if (!file.path.toLowerCase().endsWith('.jpg')) continue;
 
-        final modified = file.lastModifiedSync();
+          final modified = await file.lastModified();
 
-        if (modified.year == now.year &&
-            modified.month == now.month &&
-            modified.day == now.day) {
-          count++;
+          if (modified.millisecondsSinceEpoch > lastViewed) {
+            count++;
+          }
         }
       }
 
       if (mounted) {
-        setState(() => _todayReceiptCount = count);
+        setState(() {
+          _todayReceiptCount = count;
+        });
       }
     } catch (e) {
-      debugPrint('Could not count today receipts: $e');
+      debugPrint('Could not count new receipts: $e');
     }
   }
 
@@ -1099,9 +1103,14 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
           textInputAction: textInputAction,
           textAlign: textAlign,
           style: TextStyle(
-            fontSize: isNumber ? 19 : 20,
-            fontWeight: isNumber ? FontWeight.w600 : FontWeight.w500,
-            color: enabled ? _textColor : Colors.grey.shade400,
+            fontSize: isNumber ? 21 : 20,
+            fontWeight: isNumber ? FontWeight.w600 : FontWeight.w600,
+            color:
+                !enabled
+                    ? Colors.grey.shade400
+                    : isNumber
+                    ? const Color.fromARGB(255, 0, 0, 0)
+                    : const Color.fromARGB(255, 0, 0, 0),
           ),
           inputFormatters: inputFormatters,
           onChanged: onChanged,
@@ -1112,9 +1121,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
             fillColor:
                 !enabled
                     ? const Color(0xFFF8F9FB)
-                    : rowIndex.isEven
-                    ? Colors.white
-                    : const Color(0xFFE6F4FF),
+                    : isNumber
+                    ? const Color(0xFFE6F4FF)
+                    : Colors.white,
             isDense: true,
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 5,
@@ -1197,6 +1206,20 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openSavedReceipts() async {
+    // Mark all receipts saved up to now as viewed.
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.setInt(
+      _lastGalleryViewedKey,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+
+    if (mounted) {
+      setState(() {
+        _todayReceiptCount = 0;
+      });
+    }
+
     final appDir = await getApplicationDocumentsDirectory();
     final directory = Directory('${appDir.path}/saved_receipts');
 
@@ -1705,21 +1728,19 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   // ================= UI =================
 
   Widget buildRow(int index) {
-    const double numWidth = 76;
     const double gap = 3;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          SizedBox(
-            width: numWidth,
+          Expanded(
             child: spaceAwareField(
               controller: numControllers[index],
               focusNode: numFocusNodes[index],
               rowIndex: index,
               fieldType: 'num',
-              width: numWidth,
+              width: double.infinity,
               enabled: isNumEnabled(index),
               keyboardType: TextInputType.text,
               inputFormatters: [
@@ -1949,12 +1970,11 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 5),
             child: Row(
               children: [
-                const SizedBox(
-                  width: 76,
+                Expanded(
                   child: Center(
                     child: Text(
-                      'NUM',
-                      style: TextStyle(
+                      'Num',
+                      style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 1,
@@ -1963,13 +1983,14 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 3),
+
                 if (!isTRMode) ...[
                   Expanded(
                     child: Center(
                       child: Text(
                         'FR',
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 1,
@@ -1978,8 +1999,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 3),
                 ],
+
                 Expanded(
                   child: Center(
                     child: Text(

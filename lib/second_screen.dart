@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
-
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:image/image.dart' as img;
@@ -52,22 +52,43 @@ class _SecondScreenState extends State<SecondScreen> {
 
   List<File> _savedReceipts = [];
 
-  int get _todayReceiptCount {
-    final now = DateTime.now();
+  static const String _lastGalleryViewedKey = 'token_taker_last_gallery_viewed';
 
-    return _savedReceipts.where((file) {
-      try {
-        if (!file.existsSync()) return false;
+  int _todayReceiptCount = 0;
 
-        final modified = file.lastModifiedSync();
+  Future<void> _loadTodayReceiptCount() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
 
-        return modified.year == now.year &&
-            modified.month == now.month &&
-            modified.day == now.day;
-      } catch (_) {
-        return false;
+      int? lastViewed = prefs.getInt(_lastGalleryViewedKey);
+
+      // First launch: start tracking from now.
+      if (lastViewed == null) {
+        lastViewed = DateTime.now().millisecondsSinceEpoch;
+        await prefs.setInt(_lastGalleryViewedKey, lastViewed);
       }
-    }).length;
+
+      final directory = await _getReceiptsDirectory();
+      int count = 0;
+
+      for (final file in directory.listSync().whereType<File>()) {
+        if (!file.path.toLowerCase().endsWith('.jpg')) continue;
+
+        final modified = await file.lastModified();
+
+        if (modified.millisecondsSinceEpoch > lastViewed) {
+          count++;
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _todayReceiptCount = count;
+        });
+      }
+    } catch (e) {
+      debugPrint('Could not count new receipts: $e');
+    }
   }
 
   Future<Directory> _getReceiptsDirectory() async {
@@ -149,6 +170,24 @@ class _SecondScreenState extends State<SecondScreen> {
   }
 
   Future<void> _showSavedReceipts() async {
+    // Mark all receipts saved up to now as viewed.
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.setInt(
+      _lastGalleryViewedKey,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+
+    if (mounted) {
+      setState(() {
+        _todayReceiptCount = 0;
+      });
+    }
+
+    await _loadSavedReceipts();
+
+    if (!mounted) return;
+
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -158,7 +197,7 @@ class _SecondScreenState extends State<SecondScreen> {
 
     if (!mounted) return;
 
-    await _loadSavedReceipts();
+    await _loadTodayReceiptCount();
   }
 
   bool _isBusy = false;
@@ -185,6 +224,7 @@ class _SecondScreenState extends State<SecondScreen> {
     super.initState();
 
     _loadSavedReceipts();
+    _loadTodayReceiptCount();
 
     timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
@@ -549,7 +589,7 @@ class _SecondScreenState extends State<SecondScreen> {
       final file = File('${directory.path}/$fileName');
 
       await file.writeAsBytes(jpgBytes, flush: true);
-
+      await _loadTodayReceiptCount();
       await _loadSavedReceipts();
 
       bool hasAccess = await Gal.hasAccess();
