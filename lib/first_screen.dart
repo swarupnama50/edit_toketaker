@@ -85,34 +85,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     return 'Untitled token';
   }
 
-  List<String> generateVNumbers(String value) {
-    value = value.trim().toUpperCase();
-
-    if (value.endsWith('V')) {
-      value = value.substring(0, value.length - 1);
-    }
-
-    if (!RegExp(r'^\d{2}$').hasMatch(value)) {
-      return [];
-    }
-
-    final a = int.parse(value[0]);
-    final b = int.parse(value[1]);
-    final cA = (a + 5) % 10;
-    final cB = (b + 5) % 10;
-
-    return <String>{
-      '$a$b',
-      '$b$a',
-      '$a$cB',
-      '$cB$a',
-      '$cA$b',
-      '$b$cA',
-      '$cA$cB',
-      '$cB$cA',
-    }.toList();
-  }
-
   bool _hasCurrentData() {
     return nameController.text.trim().isNotEmpty ||
         numControllers.any((c) => c.text.trim().isNotEmpty) ||
@@ -200,32 +172,22 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       position: const RelativeRect.fromLTRB(0, 80, 0, 0),
       items: const [
         PopupMenuItem(
-          value: 'drafts',
-          child: Row(
-            children: [
-              Icon(Icons.drafts_outlined),
-              SizedBox(width: 12),
-              Text('Drafts'),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'value',
-          child: Row(
-            children: [
-              Icon(Icons.grid_view_outlined),
-              SizedBox(width: 12),
-              Text('Value'),
-            ],
-          ),
-        ),
-        PopupMenuItem(
           value: 'settings',
           child: Row(
             children: [
               Icon(Icons.settings_outlined),
               SizedBox(width: 12),
               Text('Settings'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'about',
+          child: Row(
+            children: [
+              Icon(Icons.info_outline),
+              SizedBox(width: 12),
+              Text('About'),
             ],
           ),
         ),
@@ -244,17 +206,12 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       if (value == null || !mounted) return;
 
       switch (value) {
-        case 'drafts':
-          _showDrafts();
-          break;
-        case 'value':
-          showValueDialog();
-          break;
-
         case 'settings':
           showSettingsDialog();
           break;
-
+        case 'about':
+          showAboutDialog();
+          break;
         case 'how_to_use':
           showHowToUseDialog();
           break;
@@ -321,6 +278,34 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     );
   }
 
+  void showAboutDialog() {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.info_outline, color: _primaryColor),
+                SizedBox(width: 8),
+                Text('About Token Taker'),
+              ],
+            ),
+            content: const Text(
+              'Token Taker\n\n'
+              'A simple app to manage token numbers, '
+              'FR/SR/TR amounts, calculate totals, '
+              'save receipts, and manage drafts.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+    );
+  }
+
   void showHowToUseDialog() {
     showDialog(
       context: context,
@@ -343,7 +328,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   Text(
-                    'To fill all FR amount boxes with the same amount, enter the amount followed by K. For example, enter 10K to fill all FR amount boxes with ₹10. Same with SR and TR also.',
+                    'To fill all FR amount boxes with the same amount, enter the amount followed by K. For example, enter 10K to fill all FR amount boxes with ₹10. Same with SR and TR also',
                   ),
                   SizedBox(height: 12),
                   Text(
@@ -1395,134 +1380,29 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   // ================= V GENERATOR =================
 
-  List<String> generateValues(String value) {
-    value = value.trim().toUpperCase();
+  List<String> generateVNumbers(String value) {
+    if (value.length != 3 || !value.endsWith('V')) return [];
 
-    // 2E: 02, 12, 22, ... 92
-    if (RegExp(r'^\dE$').hasMatch(value)) {
-      final digit = value[1];
-      return List.generate(10, (i) => '$i$digit');
-    }
+    String base = value.substring(0, 2);
 
-    // 9H: 90, 91, 92, ... 99
-    if (RegExp(r'^\dH$').hasMatch(value)) {
-      final digit = value[0];
-      return List.generate(10, (i) => '$digit$i');
-    }
+    int a = int.parse(base[0]);
+    int b = int.parse(base[1]);
 
-    // AP: 00, 11, 22, ... 99
-    if (value == 'AP') {
-      return List.generate(10, (i) => '$i$i');
-    }
+    int cA = (a >= 5) ? a - 5 : a + 5;
+    int cB = (b >= 5) ? b - 5 : b + 5;
 
-    // HP: 05, 50, 16, 61, 27, 72, 38, 83, 49, 94
-    if (value == 'HP') {
-      return ['05', '50', '16', '61', '27', '72', '38', '83', '49', '94'];
-    }
+    Set<String> numbers = {};
 
-    // Accept two digits, optionally followed by V.
-    if (value.endsWith('V')) {
-      value = value.substring(0, value.length - 1);
-    }
+    numbers.add("$a$b");
+    numbers.add("$b$a");
+    numbers.add("$cA$cB");
+    numbers.add("$cB$cA");
+    numbers.add("$a$cB");
+    numbers.add("$cB$a");
+    numbers.add("$cA$b");
+    numbers.add("$b$cA");
 
-    if (!RegExp(r'^\d{2}$').hasMatch(value)) {
-      return [];
-    }
-
-    // Existing two-digit number generation.
-    final a = int.parse(value[0]);
-    final b = int.parse(value[1]);
-    final cA = (a + 5) % 10;
-    final cB = (b + 5) % 10;
-
-    return <String>{
-      '$a$b',
-      '$b$a',
-      '$a$cB',
-      '$cB$a',
-      '$cA$b',
-      '$b$cA',
-      '$cA$cB',
-      '$cB$cA',
-    }.toList();
-  }
-
-  void showValueDialog() {
-    final controller = TextEditingController();
-    List<String> numbers = [];
-
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Enter Num to know its Value'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: controller,
-                    autofocus: true,
-                    textCapitalization: TextCapitalization.characters,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'[0-9a-zA-Z]')),
-                      LengthLimitingTextInputFormatter(3),
-                    ],
-                    decoration: const InputDecoration(
-                      labelText: 'Enter number',
-                      hintText: '78, 2E, 9H, AP, HP',
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (value) {
-                      final normalized = value.toUpperCase();
-
-                      if (value != normalized) {
-                        controller.value = TextEditingValue(
-                          text: normalized,
-                          selection: TextSelection.collapsed(
-                            offset: normalized.length,
-                          ),
-                        );
-                      }
-
-                      setDialogState(() {
-                        numbers = generateValues(normalized);
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  if (numbers.isNotEmpty)
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children:
-                          numbers
-                              .map(
-                                (number) => Chip(
-                                  label: Text(
-                                    number,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              )
-                              .toList(),
-                    ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Close'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    ).then((_) => controller.dispose());
+    return numbers.toList();
   }
 
   void showVNumbersPopup(String value) {
@@ -2441,7 +2321,20 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                           padding: EdgeInsets.zero,
                         ),
                       ),
-
+                      // Drafts
+                      Expanded(
+                        child: IconButton(
+                          tooltip: 'Drafts',
+                          onPressed: _showDrafts,
+                          icon: Badge(
+                            isLabelVisible: _drafts.isNotEmpty,
+                            label: Text('${_drafts.length}'),
+                            child: const Icon(Icons.drafts_outlined),
+                          ),
+                          iconSize: 25,
+                          padding: EdgeInsets.zero,
+                        ),
+                      ),
                       // New Token
                       Expanded(
                         child: IconButton(
