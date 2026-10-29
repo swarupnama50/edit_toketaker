@@ -45,6 +45,8 @@ class _SecondScreenState extends State<SecondScreen> {
     return colors[index % colors.length];
   }
 
+  static const String _saveToDeviceGalleryKey = 'save_to_device_gallery';
+
   late Timer timer;
   DateTime currentTime = DateTime.now();
 
@@ -592,6 +594,18 @@ class _SecondScreenState extends State<SecondScreen> {
       await _loadTodayReceiptCount();
       await _loadSavedReceipts();
 
+      final prefs = await SharedPreferences.getInstance();
+      final saveToDeviceGallery =
+          prefs.getBool(_saveToDeviceGalleryKey) ?? true;
+
+      if (!saveToDeviceGallery) {
+        _showMessage(
+          'Receipt saved in the app gallery.',
+          onView: () => _viewSavedReceipt(file),
+        );
+        return;
+      }
+
       bool hasAccess = await Gal.hasAccess();
 
       if (!hasAccess) {
@@ -601,11 +615,17 @@ class _SecondScreenState extends State<SecondScreen> {
       if (!hasAccess) {
         _showMessage(
           'Receipt saved in the app, but Gallery permission was denied.',
+          onView: () => _viewSavedReceipt(file),
         );
         return;
       }
 
       await Gal.putImage(file.path);
+
+      _showMessage(
+        'Receipt saved in the app and device Gallery.',
+        onView: () => _viewSavedReceipt(file),
+      );
 
       _showMessage(
         'Receipt saved successfully.',

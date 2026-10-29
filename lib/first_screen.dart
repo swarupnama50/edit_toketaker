@@ -30,6 +30,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   static const Color _primaryColor = Color(0xFF2878D0);
   static const Color _borderColor = Color(0xFFD5D9E0);
+  static const String _saveToDeviceGalleryKey = 'save_to_device_gallery';
+
+  bool _saveToDeviceGallery = true;
 
   bool _restoringWorkingState = false;
 
@@ -161,6 +164,225 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     } catch (e) {
       debugPrint('Could not count new receipts: $e');
     }
+  }
+
+  void showAppMenu() {
+    showMenu<String>(
+      context: context,
+      position: const RelativeRect.fromLTRB(0, 80, 0, 0),
+      items: const [
+        PopupMenuItem(
+          value: 'settings',
+          child: Row(
+            children: [
+              Icon(Icons.settings_outlined),
+              SizedBox(width: 12),
+              Text('Settings'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'about',
+          child: Row(
+            children: [
+              Icon(Icons.info_outline),
+              SizedBox(width: 12),
+              Text('About'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'how_to_use',
+          child: Row(
+            children: [
+              Icon(Icons.help_outline),
+              SizedBox(width: 12),
+              Text('How to Use'),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == null || !mounted) return;
+
+      switch (value) {
+        case 'settings':
+          showSettingsDialog();
+          break;
+        case 'about':
+          showAboutDialog();
+          break;
+        case 'how_to_use':
+          showHowToUseDialog();
+          break;
+      }
+    });
+  }
+
+  Future<void> showSettingsDialog() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedValue = prefs.getBool(_saveToDeviceGalleryKey) ?? true;
+
+    if (!mounted) return;
+
+    setState(() {
+      _saveToDeviceGallery = savedValue;
+    });
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.settings_outlined, color: _primaryColor),
+                  SizedBox(width: 8),
+                  Text('Settings'),
+                ],
+              ),
+              content: SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text(
+                  'Save to device Gallery',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: const Text(
+                  'Show newly downloaded images in your device gallery',
+                ),
+                value: _saveToDeviceGallery,
+                activeTrackColor: _primaryColor,
+                onChanged: (value) async {
+                  setDialogState(() {
+                    _saveToDeviceGallery = value;
+                  });
+
+                  setState(() {
+                    _saveToDeviceGallery = value;
+                  });
+
+                  await prefs.setBool(_saveToDeviceGalleryKey, value);
+                },
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Close'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void showAboutDialog() {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.info_outline, color: _primaryColor),
+                SizedBox(width: 8),
+                Text('About Token Taker'),
+              ],
+            ),
+            content: const Text(
+              'Token Taker\n\n'
+              'A simple app to manage token numbers, '
+              'FR/SR/TR amounts, calculate totals, '
+              'save receipts, and manage drafts.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  void showHowToUseDialog() {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.help_outline, color: _primaryColor),
+                SizedBox(width: 8),
+                Expanded(child: Text('How to Use')),
+              ],
+            ),
+            content: const SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '1. Fill FR,SR,TR with same amount',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    'To fill all FR amount boxes with the same amount, enter the amount followed by K. For example, enter 10K to fill all FR amount boxes with ₹10. Same with SR and TR also',
+                  ),
+                  SizedBox(height: 12),
+                  Text(
+                    '2. Enter Numbers',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  Text('Enter numbers in the Num column.'),
+                  SizedBox(height: 12),
+                  Text(
+                    '3. Enter Amounts',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  Text('Fill FR and SR amounts, or use TR mode.'),
+                  SizedBox(height: 12),
+                  Text(
+                    '4. Navigate Quickly',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  Text('Use Space or Enter to move between fields.'),
+                  SizedBox(height: 12),
+                  Text(
+                    '5. Paste Data',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  Text('Use the paste icon to import token rows.'),
+                  SizedBox(height: 12),
+                  Text(
+                    '6. Manage Tokens',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    'Use Drafts to save lists and the gallery icon '
+                    'to view saved receipts.',
+                  ),
+                  SizedBox(height: 12),
+                  Text(
+                    '7. View Total',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    'The total updates automatically. Tap the arrow '
+                    'to continue when the entries are valid.',
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+    );
   }
 
   Future<void> _persistDrafts() async {
@@ -1912,6 +2134,11 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       resizeToAvoidBottomInset: true,
       backgroundColor: _pageColor,
       appBar: AppBar(
+        leading: IconButton(
+          tooltip: 'Menu',
+          icon: const Icon(Icons.menu, color: _primaryColor),
+          onPressed: showAppMenu,
+        ),
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
