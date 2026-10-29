@@ -127,6 +127,55 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   int _todayReceiptCount = 0;
 
+  Future<void> _copyTokenData() async {
+    final lines = <String>[];
+
+    if (isTRMode) {
+      lines.add('Num      TR');
+    } else {
+      lines.add('Num      FR      SR');
+    }
+
+    int total = 0;
+
+    for (int i = 0; i < numControllers.length; i++) {
+      final num = numControllers[i].text.trim();
+      final fr = frControllers[i].text.trim();
+      final sr = srControllers[i].text.trim();
+
+      if (num.isEmpty && fr.isEmpty && sr.isEmpty) continue;
+
+      if (isTRMode) {
+        final amount = sr.isEmpty ? 'x' : sr;
+        total += int.tryParse(sr) ?? 0;
+
+        lines.add('${num.padRight(9)}${amount.padRight(8)}');
+      } else {
+        final frAmount = fr.isEmpty ? 'x' : fr;
+        final srAmount = sr.isEmpty ? 'x' : sr;
+
+        total += (int.tryParse(fr) ?? 0) + (int.tryParse(sr) ?? 0);
+
+        lines.add(
+          '${num.padRight(9)}'
+          '${frAmount.padRight(8)}'
+          '$srAmount',
+        );
+      }
+    }
+
+    lines.add('');
+    lines.add('Total- $total');
+
+    await Clipboard.setData(ClipboardData(text: lines.join('\n')));
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Copied token data')));
+  }
+
   Future<void> _loadTodayReceiptCount() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -172,6 +221,26 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       position: const RelativeRect.fromLTRB(0, 80, 0, 0),
       items: const [
         PopupMenuItem(
+          value: 'drafts',
+          child: Row(
+            children: [
+              Icon(Icons.drafts_outlined),
+              SizedBox(width: 12),
+              Text('Drafts'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'copy',
+          child: Row(
+            children: const [
+              Icon(Icons.copy),
+              SizedBox(width: 12),
+              Text('Copy'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
           value: 'settings',
           child: Row(
             children: [
@@ -206,6 +275,12 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       if (value == null || !mounted) return;
 
       switch (value) {
+        case 'drafts':
+          _showDrafts();
+          break;
+        case 'copy':
+          _copyTokenData();
+          break;
         case 'settings':
           showSettingsDialog();
           break;
@@ -2321,20 +2396,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                           padding: EdgeInsets.zero,
                         ),
                       ),
-                      // Drafts
-                      Expanded(
-                        child: IconButton(
-                          tooltip: 'Drafts',
-                          onPressed: _showDrafts,
-                          icon: Badge(
-                            isLabelVisible: _drafts.isNotEmpty,
-                            label: Text('${_drafts.length}'),
-                            child: const Icon(Icons.drafts_outlined),
-                          ),
-                          iconSize: 25,
-                          padding: EdgeInsets.zero,
-                        ),
-                      ),
+
                       // New Token
                       Expanded(
                         child: IconButton(
