@@ -49,6 +49,134 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   final TextEditingController nameController = TextEditingController();
 
+  // ================= UNDO / REDO =================
+
+  static const int _maxHistory = 50;
+
+  final List<String> _undoStack = [];
+  final List<String> _redoStack = [];
+  String _currentSnap = '[]';
+  Timer? _historyTimer;
+  bool _applyingHistory = false;
+
+  String _buildSnapshot() {
+    final rows = <Map<String, String>>[];
+
+    for (int i = 0; i < numControllers.length; i++) {
+      final num = numControllers[i].text.trim();
+      final fr = frControllers[i].text.trim();
+      final sr = srControllers[i].text.trim();
+
+      if (num.isNotEmpty || fr.isNotEmpty || sr.isNotEmpty) {
+        rows.add({'num': num, 'fr': fr, 'sr': sr});
+      }
+    }
+
+    return jsonEncode(rows);
+  }
+
+  void _scheduleHistoryRecord() {
+    if (_applyingHistory) return;
+
+    _historyTimer?.cancel();
+    _historyTimer = Timer(const Duration(milliseconds: 500), _recordHistory);
+  }
+
+  void _recordHistory() {
+    _historyTimer?.cancel();
+    _historyTimer = null;
+
+    if (_applyingHistory) return;
+
+    final snap = _buildSnapshot();
+    if (snap == _currentSnap) return;
+
+    _undoStack.add(_currentSnap);
+    if (_undoStack.length > _maxHistory) {
+      _undoStack.removeAt(0);
+    }
+
+    _currentSnap = snap;
+    _redoStack.clear();
+
+    amountRevision.value++;
+  }
+
+  // Call when a different token is loaded or the list is cleared.
+  void _resetHistory() {
+    _historyTimer?.cancel();
+    _historyTimer = null;
+    _undoStack.clear();
+    _redoStack.clear();
+    _currentSnap = _buildSnapshot();
+
+    amountRevision.value++;
+  }
+
+  void _applySnapshot(String snap) {
+    _applyingHistory = true;
+
+    try {
+      hideKeyboard();
+
+      final rows =
+          (jsonDecode(snap) as List<dynamic>)
+              .map((item) => Map<String, dynamic>.from(item as Map))
+              .toList();
+
+      while (numControllers.length < rows.length + 1 &&
+          numControllers.length < 200) {
+        addNewRow();
+      }
+
+      for (final c in numControllers) {
+        c.clear();
+      }
+      for (final c in frControllers) {
+        c.clear();
+      }
+      for (final c in srControllers) {
+        c.clear();
+      }
+
+      for (int i = 0; i < rows.length && i < numControllers.length; i++) {
+        numControllers[i].text = rows[i]['num'] as String? ?? '';
+        frControllers[i].text = rows[i]['fr'] as String? ?? '';
+        srControllers[i].text = rows[i]['sr'] as String? ?? '';
+      }
+
+      warnedDuplicateRows.clear();
+      _currentSnap = snap;
+    } finally {
+      _applyingHistory = false;
+    }
+
+    if (mounted) setState(() {});
+    amountRevision.value++;
+    _scheduleWorkingSave();
+  }
+
+  void _undo() {
+    _recordHistory(); // save any pending typing first
+
+    if (_undoStack.isEmpty) return;
+
+    _redoStack.add(_currentSnap);
+    _applySnapshot(_undoStack.removeLast());
+  }
+
+  void _redo() {
+    _recordHistory();
+
+    if (_redoStack.isEmpty) return;
+
+    _undoStack.add(_currentSnap);
+    if (_undoStack.length > _maxHistory) {
+      _undoStack.removeAt(0);
+    }
+    _applySnapshot(_redoStack.removeLast());
+  }
+
   static const String _draftsKey = 'token_taker_drafts';
 
   List<Map<String, dynamic>> _drafts = [];
@@ -230,11 +358,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         PopupMenuItem(
           value: 'copy',
           child: Row(
-            children: const [
-              Icon(Icons.copy),
-              SizedBox(width: 12),
-              Text('Copy'),
-            ],
+            children: [Icon(Icons.copy), SizedBox(width: 12), Text('Copy')],
           ),
         ),
         PopupMenuItem(
@@ -489,6 +613,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   void _scheduleWorkingSave() {
     if (_restoringWorkingState) return;
+    _scheduleHistoryRecord();
 
     _workingSaveTimer?.cancel();
 
@@ -596,6 +721,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       }
     } finally {
       _restoringWorkingState = false;
+      _resetHistory();
     }
   }
 
@@ -816,6 +942,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     nameController.clear();
     warnedDuplicateRows.clear();
     _activeDraftId = null;
+    _resetHistory();
 
     amountRevision.value++;
 
@@ -907,6 +1034,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       warnedDuplicateRows.clear();
       amountRevision.value++;
     });
+    _resetHistory();
 
     await _saveMode(isTRMode);
     _scheduleWorkingSave();
@@ -1606,6 +1734,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       // Refresh total and Continue button.
       amountRevision.value++;
     });
+    _resetHistory();
 
     // Save the fresh state so reopening the app keeps it blank.
     await _saveWorkingState();
@@ -2146,6 +2275,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     _workingSaveTimer?.cancel();
+    _historyTimer?.cancel();
 
     // Save the latest working list before disposing.
     _saveWorkingState();
@@ -2408,18 +2538,51 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                       ),
 
                       // Total
+                      // Undo / Redo + Total
                       Expanded(
                         flex: 2,
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          alignment: Alignment.center,
-                          child: Text(
-                            '₹ ${getTotalAmount()}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 26,
+                              child: IconButton(
+                                tooltip: 'Undo',
+                                onPressed:
+                                    _undoStack.isNotEmpty ||
+                                            _buildSnapshot() != _currentSnap
+                                        ? _undo
+                                        : null,
+                                icon: const Icon(Icons.undo),
+                                iconSize: 18,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                              ),
                             ),
-                          ),
+                            SizedBox(
+                              width: 26,
+                              child: IconButton(
+                                tooltip: 'Redo',
+                                onPressed: _redoStack.isNotEmpty ? _redo : null,
+                                icon: const Icon(Icons.redo),
+                                iconSize: 18,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                              ),
+                            ),
+                            Expanded(
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.center,
+                                child: Text(
+                                  '₹ ${getTotalAmount()}',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
 
