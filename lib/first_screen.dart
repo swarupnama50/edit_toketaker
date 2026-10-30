@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:token_taker/AmountInputFomatter.dart';
 import 'package:token_taker/saved_tokens.dart';
 import 'package:token_taker/second_screen.dart';
 import 'dart:io';
@@ -31,6 +32,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   static const Color _primaryColor = Color(0xFF2878D0);
   static const Color _borderColor = Color(0xFFD5D9E0);
   static const String _saveToDeviceGalleryKey = 'save_to_device_gallery';
+  static const String _uGuideShownKey = 'u_guide_shown';
 
   bool _saveToDeviceGallery = true;
 
@@ -528,53 +530,33 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    '1. Fill FR,SR,TR with same amount',
+                    '1. Fill Multiple Amount Boxes',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   Text(
-                    'To fill all FR amount boxes with the same amount, enter the amount followed by K. For example, enter 10K to fill all FR amount boxes with ₹10. Same with SR and TR also',
+                    'Enter 10i in an amount box to fill eligible blank '
+                    'amount boxes below with ₹10.',
                   ),
                   SizedBox(height: 12),
                   Text(
-                    '2. Enter Numbers',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  Text('Enter numbers in the Num column.'),
-                  SizedBox(height: 12),
-                  Text(
-                    '3. Enter Amounts',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  Text('Fill FR and SR amounts, or use TR mode.'),
-                  SizedBox(height: 12),
-                  Text(
-                    '4. Navigate Quickly',
+                    '2. Navigate Quickly',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   Text('Use Space or Enter to move between fields.'),
                   SizedBox(height: 12),
                   Text(
-                    '5. Paste Data',
+                    '3. Paste Data',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   Text('Use the paste icon to import token rows.'),
                   SizedBox(height: 12),
                   Text(
-                    '6. Manage Tokens',
+                    '4. Manage Tokens',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   Text(
-                    'Use Drafts to save lists and the gallery icon '
-                    'to view saved receipts.',
-                  ),
-                  SizedBox(height: 12),
-                  Text(
-                    '7. View Total',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    'The total updates automatically. Tap the arrow '
-                    'to continue when the entries are valid.',
+                    'Use Drafts to save tokens for later editing and the '
+                    'gallery icon to view saved images.',
                   ),
                 ],
               ),
@@ -586,6 +568,183 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
+    );
+  }
+
+  Future<void> _showFirstInstallGuide() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    if (prefs.getBool(_uGuideShownKey) ?? false) return;
+    if (!mounted) return;
+
+    // Wait until the main screen is rendered.
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          title: const Column(
+            children: [
+              Icon(Icons.touch_app, size: 38, color: _primaryColor),
+              SizedBox(height: 8),
+              Text('Quick Tip: Use i', textAlign: TextAlign.center),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Fill multiple amount boxes at once! using i',
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 18),
+
+              // Faded app preview.
+              Opacity(
+                opacity: 0.45,
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        _guideBox('Num', true),
+                        const SizedBox(width: 5),
+                        if (!isTRMode) ...[
+                          _guideBox('FR', false),
+                          const SizedBox(width: 5),
+                        ],
+                        _guideBox('SR / TR', false),
+                      ],
+                    ),
+                    const SizedBox(height: 7),
+                    Row(
+                      children: [
+                        _guideBox('10', true),
+                        const SizedBox(width: 5),
+                        if (!isTRMode) ...[
+                          _guideBox('10', false),
+                          const SizedBox(width: 5),
+                        ],
+                        _guideBox('10', false),
+                      ],
+                    ),
+                    const SizedBox(height: 7),
+                    Row(
+                      children: [
+                        _guideBox('11', true),
+                        const SizedBox(width: 5),
+                        if (!isTRMode) ...[
+                          _guideBox('10', false),
+                          const SizedBox(width: 5),
+                        ],
+                        _guideBox('10', false),
+                      ],
+                    ),
+                    const SizedBox(height: 7),
+                    Row(
+                      children: [
+                        _guideBox('12', true),
+                        const SizedBox(width: 5),
+                        if (!isTRMode) ...[
+                          _guideBox('10', false),
+                          const SizedBox(width: 5),
+                        ],
+                        _guideBox('10', false),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE6F4FF),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: _primaryColor.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.lightbulb_outline, color: _primaryColor),
+                      SizedBox(width: 8),
+                      Text(
+                        'Enter 10i',
+                        style: TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.bold,
+                          color: _primaryColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              const Text(
+                'Type 10i in an amount box. '
+                'The app automatically fills the eligible blank '
+                'amount boxes below with ₹10.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13),
+              ),
+            ],
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _primaryColor,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                },
+                child: const Text("Got it! Let's Start"),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    await prefs.setBool(_uGuideShownKey, true);
+  }
+
+  Widget _guideBox(String value, bool isNum) {
+    return Expanded(
+      child: Container(
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        decoration: BoxDecoration(
+          color: isNum ? const Color(0xFFE6F4FF) : Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _borderColor),
+        ),
+        child: Text(
+          value,
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+      ),
     );
   }
 
@@ -781,6 +940,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       int next = 0; // index of the first token after the Num
 
       final first = tokens[0];
+      String? compactAmount;
 
       if (digitsOnly.hasMatch(first)) {
         final hasNextLetters =
@@ -803,8 +963,21 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
           } else {
             continue;
           }
+        } else if (first.length > 2) {
+          // Joined number and amount: 1510 = Num 15, Amount 10
+          final possibleNum = first.substring(0, 2);
+          final possibleAmount = first.substring(2);
+
+          final amount = int.tryParse(possibleAmount);
+
+          if (amount == null || amount < 1 || amount > 15000) {
+            continue;
+          }
+
+          num = possibleNum;
+          compactAmount = possibleAmount;
+          next = 1;
         } else {
-          // 4520, 450 ... no gap between digits -> ignore
           continue;
         }
       } else {
@@ -825,6 +998,11 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       // ---------- 2. Find the amounts ----------
       String? frLabel, srLabel, trLabel;
       final unlabelled = <String>[];
+
+      if (compactAmount != null) {
+        unlabelled.add(compactAmount);
+      }
+
       String? pendingLabel;
 
       for (int i = next; i < tokens.length; i++) {
@@ -974,7 +1152,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       ..hideCurrentSnackBar()
       ..showSnackBar(
         const SnackBar(
-          content: Text('New blank token list created'),
+          content: Text('Saved to Draft'),
           duration: Duration(seconds: 1),
           behavior: SnackBarBehavior.floating,
           margin: EdgeInsets.only(left: 12, right: 12, bottom: 60),
@@ -1251,6 +1429,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     if (!mounted) return;
 
     await _restoreWorkingState(savedMode);
+
+    if (mounted) {
+      await _showFirstInstallGuide();
+    }
   }
 
   Future<void> _saveMode(bool value) async {
@@ -2016,9 +2198,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     if (mounted) setState(() {});
   }
 
-  // ================= K AMOUNT LOGIC =================
+  // ================= i AMOUNT LOGIC =================
 
-  void handleAmountWithK(
+  void handleAmountWithI(
     TextEditingController controller,
     String val,
     int rowIndex,
@@ -2026,14 +2208,13 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   ) {
     final upperVal = val.toUpperCase();
 
-    if (!upperVal.endsWith('K')) return;
+    if (!upperVal.endsWith('I')) return;
 
     final amountText = upperVal.substring(0, upperVal.length - 1);
     final amount = int.tryParse(amountText);
 
     if (amount == null || amount < 1 || amount > 15000) {
       controller.clear();
-
       return;
     }
 
@@ -2046,50 +2227,47 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     final sortedIndexes = getSortedRowIndexes();
     final currentPosition = sortedIndexes.indexOf(rowIndex);
 
-    if (currentPosition != -1) {
-      final numericRowPattern = RegExp(r'^\d{2}$');
+    if (currentPosition == -1) return;
 
-      bool isNormalNumericRow(String value) {
-        return numericRowPattern.hasMatch(value);
+    final numericRowPattern = RegExp(r'^\d{2}$');
+
+    bool isNormalNumericRow(String value) {
+      return numericRowPattern.hasMatch(value);
+    }
+
+    int lastBlankNumericPosition = -1;
+
+    for (
+      int position = currentPosition + 1;
+      position < sortedIndexes.length;
+      position++
+    ) {
+      final index = sortedIndexes[position];
+      final numberText = numControllers[index].text.trim();
+
+      if (isNormalNumericRow(numberText) &&
+          controllers[index].text.trim().isEmpty) {
+        lastBlankNumericPosition = position;
+      }
+    }
+
+    for (
+      int position = currentPosition + 1;
+      position < sortedIndexes.length;
+      position++
+    ) {
+      final belowIndex = sortedIndexes[position];
+      final numberText = numControllers[belowIndex].text.trim();
+
+      if (!isNormalNumericRow(numberText)) continue;
+
+      if (controllers[belowIndex].text.trim().isEmpty) {
+        controllers[belowIndex].text = amountText;
+        continue;
       }
 
-      // Find the last blank numeric row below the current row.
-      int lastBlankNumericPosition = -1;
-
-      for (
-        int position = currentPosition + 1;
-        position < sortedIndexes.length;
-        position++
-      ) {
-        final index = sortedIndexes[position];
-        final numberText = numControllers[index].text.trim();
-
-        if (isNormalNumericRow(numberText) &&
-            controllers[index].text.trim().isEmpty) {
-          lastBlankNumericPosition = position;
-        }
-      }
-
-      // Fill amounts using the original stopping behavior.
-      for (
-        int position = currentPosition + 1;
-        position < sortedIndexes.length;
-        position++
-      ) {
-        final belowIndex = sortedIndexes[position];
-        final numberText = numControllers[belowIndex].text.trim();
-
-        if (!isNormalNumericRow(numberText)) continue;
-
-        if (controllers[belowIndex].text.trim().isEmpty) {
-          controllers[belowIndex].text = amountText;
-          continue;
-        }
-
-        // Stop if a blank numeric row remains below this row.
-        if (lastBlankNumericPosition > position) {
-          break;
-        }
+      if (lastBlankNumericPosition > position) {
+        break;
       }
     }
   }
@@ -2232,15 +2410,12 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                 width: double.infinity,
                 enabled: isFirstFilled(index),
                 keyboardType: TextInputType.text,
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[0-9Kk ]')),
-                  LengthLimitingTextInputFormatter(5),
-                ],
+                inputFormatters: [AmountInputFormatter()],
                 onChanged: (val) {
                   if (val.endsWith(' ')) {
                     handleSpaceInput(frControllers[index], val, index, 'fr');
                   } else {
-                    handleAmountWithK(frControllers[index], val, index, true);
+                    handleAmountWithI(frControllers[index], val, index, true);
                   }
                 },
                 onSubmitted: (_) => moveToNextAmount(index, 'fr'),
@@ -2267,7 +2442,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                 if (val.endsWith(' ')) {
                   handleSpaceInput(srControllers[index], val, index, 'sr');
                 } else {
-                  handleAmountWithK(srControllers[index], val, index, false);
+                  handleAmountWithI(srControllers[index], val, index, false);
                 }
               },
               onSubmitted:
