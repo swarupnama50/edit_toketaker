@@ -726,6 +726,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         sr =
             trLabel ??
             srLabel ??
+            frLabel ??
             (unlabelled.isNotEmpty ? unlabelled.last : '');
       } else {
         fr = frLabel ?? '';
