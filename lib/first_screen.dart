@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:token_taker/AmountInputFomatter.dart';
+import 'package:token_taker/amount_input_formatter.dart';
 import 'package:token_taker/saved_tokens.dart';
 import 'package:token_taker/second_screen.dart';
 import 'dart:io';
