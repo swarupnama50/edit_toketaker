@@ -136,8 +136,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       lines.add('Num      FR      SR');
     }
 
-    int total = 0;
-
     for (int i = 0; i < numControllers.length; i++) {
       final num = numControllers[i].text.trim();
       final fr = frControllers[i].text.trim();
@@ -147,14 +145,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
       if (isTRMode) {
         final amount = sr.isEmpty ? 'x' : sr;
-        total += int.tryParse(sr) ?? 0;
-
         lines.add('${num.padRight(9)}${amount.padRight(8)}');
       } else {
         final frAmount = fr.isEmpty ? 'x' : fr;
         final srAmount = sr.isEmpty ? 'x' : sr;
-
-        total += (int.tryParse(fr) ?? 0) + (int.tryParse(sr) ?? 0);
 
         lines.add(
           '${num.padRight(9)}'
@@ -163,6 +157,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         );
       }
     }
+
+    // Use exactly the same calculation as the displayed total.
+    final total = getTotalAmount();
 
     lines.add('');
     lines.add('Total- $total');
