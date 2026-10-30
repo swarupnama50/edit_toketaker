@@ -609,8 +609,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       _saveWorkingState();
     }
   }
-  //===================Paste=========================
 
+  //===================Paste=========================
   Future<void> pasteTokenData() async {
     final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
     final text = clipboardData?.text;
@@ -619,19 +619,12 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     final parsedRows = <Map<String, String>>[];
 
-    final numberPattern = RegExp(
-      r'^(AP|HP|\d{2}V|\d[HE]|\d{2}|\d)',
-      caseSensitive: false,
-    );
-
-    final validNumPattern = RegExp(
-      r'^(?:\d{2}|\d[HE]|\d{2}V|AP|HP)$',
-      caseSensitive: false,
-    );
+    // Every symbol / space is ignored: we only keep runs of digits or letters.
+    final tokenPattern = RegExp(r'\d+|[A-Za-z]+');
+    final digitsOnly = RegExp(r'^\d+$');
 
     for (final line in text.split(RegExp(r'\r?\n'))) {
       final trimmed = line.trim();
-
       if (trimmed.isEmpty) continue;
 
       if (RegExp(
@@ -641,108 +634,106 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         continue;
       }
 
-      final match = numberPattern.firstMatch(trimmed);
-      if (match == null) continue;
+      final tokens =
+          tokenPattern
+              .allMatches(trimmed)
+              .map((m) => m.group(0)!.toUpperCase())
+              .toList();
 
-      var num = match.group(1)!.toUpperCase();
-      var remainder = trimmed.substring(match.end);
+      if (tokens.isEmpty) continue;
 
-      // Reject 1520, but allow 15 20 and 15v20.
-      if (RegExp(r'^\d{2}$').hasMatch(num) &&
-          RegExp(r'^\d').hasMatch(remainder)) {
-        continue;
-      }
+      // ---------- 1. Find the Num ----------
+      String num = '';
+      int next = 0; // index of the first token after the Num
 
-      // Recognize suffix words either directly after the number
-      // or after separators, such as 23==velu==20 and 6==house==10.
-      final suffixMatch = RegExp(
-        r'^\s*[-+@_=/*:]*\s*([A-Za-z]+)',
-      ).firstMatch(remainder);
+      final first = tokens[0];
 
-      if (suffixMatch != null) {
-        final word = suffixMatch.group(1)!.toUpperCase();
+      if (digitsOnly.hasMatch(first)) {
+        final hasNextLetters =
+            tokens.length > 1 && !digitsOnly.hasMatch(tokens[1]);
 
-        if (RegExp(r'^\d{2}$').hasMatch(num) && word.startsWith('V')) {
-          num += 'V';
-        } else if (RegExp(r'^\d$').hasMatch(num) && word.startsWith('H')) {
-          num += 'H';
-        } else if (RegExp(r'^\d$').hasMatch(num) && word.startsWith('E')) {
-          num += 'E';
+        if (first.length == 2) {
+          // 45 / 45V / 45!V / 45!velu
+          num = first;
+          next = 1;
+          if (hasNextLetters && tokens[1].startsWith('V')) {
+            num += 'V';
+            next = 2;
+          }
+        } else if (first.length == 1) {
+          // 4E / 4!E / 4#H / 4 hoze
+          if (hasNextLetters &&
+              (tokens[1].startsWith('H') || tokens[1].startsWith('E'))) {
+            num = first + tokens[1][0];
+            next = 2;
+          } else {
+            continue;
+          }
+        } else {
+          // 4520, 450 ... no gap between digits -> ignore
+          continue;
         }
-
-        // Remove the suffix word so its letters aren't treated as data.
-        remainder = remainder.replaceRange(
-          suffixMatch.start,
-          suffixMatch.end,
-          ' ',
-        );
+      } else {
+        // AP / HP, also A!P and H-P
+        if (first.startsWith('AP') || first.startsWith('HP')) {
+          num = first.substring(0, 2);
+          next = 1;
+        } else if ((first == 'A' || first == 'H') &&
+            tokens.length > 1 &&
+            tokens[1].startsWith('P')) {
+          num = '${first}P';
+          next = 2;
+        } else {
+          continue;
+        }
       }
 
-      if (!validNumPattern.hasMatch(num)) continue;
+      // ---------- 2. Find the amounts ----------
+      String? frLabel, srLabel, trLabel;
+      final unlabelled = <String>[];
+      String? pendingLabel;
 
-      // Look for explicitly labelled FR/SR/TR amounts first.
-      final frMatch = RegExp(
-        r'\bFR\b[^0-9]{0,15}(\d{1,5})',
-        caseSensitive: false,
-      ).firstMatch(remainder);
+      for (int i = next; i < tokens.length; i++) {
+        final t = tokens[i];
 
-      final srMatch = RegExp(
-        r'\bSR\b[^0-9]{0,15}(\d{1,5})',
-        caseSensitive: false,
-      ).firstMatch(remainder);
+        if (digitsOnly.hasMatch(t)) {
+          final amount = int.tryParse(t);
+          final valid = amount != null && amount >= 1 && amount <= 15000;
 
-      final trMatch = RegExp(
-        r'\bTR\b[^0-9]{0,15}(\d{1,5})',
-        caseSensitive: false,
-      ).firstMatch(remainder);
+          if (valid) {
+            if (pendingLabel == 'FR') {
+              frLabel = t;
+            } else if (pendingLabel == 'SR') {
+              srLabel = t;
+            } else if (pendingLabel == 'TR') {
+              trLabel = t;
+            } else {
+              unlabelled.add(t);
+            }
+          }
+          pendingLabel = null;
+        } else {
+          // Words are ignored, except FR / SR / TR labels.
+          pendingLabel = (t == 'FR' || t == 'SR' || t == 'TR') ? t : null;
+        }
+      }
 
-      // Remove words, then collect unlabelled amounts.
-      final withoutWords = remainder.replaceAll(RegExp(r'[A-Za-z]+'), ' ');
-
-      final amounts =
-          RegExp(
-            r'\d{1,5}',
-          ).allMatches(withoutWords).map((m) => m.group(0)!).where((value) {
-            final amount = int.tryParse(value);
-            return amount != null && amount >= 1 && amount <= 15000;
-          }).toList();
-
+      // ---------- 3. Assign FR / SR ----------
       String fr = '';
       String sr = '';
 
       if (isTRMode) {
-        final trValue = trMatch?.group(1);
-        final srValue = srMatch?.group(1);
-
-        if (trValue != null) {
-          sr = trValue;
-        } else if (srValue != null) {
-          sr = srValue;
-        } else if (amounts.isNotEmpty) {
-          sr = amounts.last;
-        }
+        sr =
+            trLabel ??
+            srLabel ??
+            (unlabelled.isNotEmpty ? unlabelled.last : '');
       } else {
-        if (frMatch != null) {
-          fr = frMatch.group(1)!;
-        }
+        fr = frLabel ?? '';
+        sr = srLabel ?? '';
 
-        if (srMatch != null) {
-          sr = srMatch.group(1)!;
-        }
-
-        // If there are no explicit labels, use the amounts in order.
-        if (frMatch == null && srMatch == null) {
-          if (amounts.isNotEmpty) fr = amounts[0];
-          if (amounts.length >= 2) sr = amounts[1];
-        } else {
-          // Fill any unlabelled field from the remaining amounts.
-          if (fr.isEmpty && amounts.isNotEmpty) {
-            fr = amounts[0];
-          }
-          if (sr.isEmpty && amounts.length >= 2) {
-            sr = amounts[1];
-          }
-        }
+        final rest = List<String>.from(unlabelled);
+        if (fr.isEmpty && rest.isNotEmpty) fr = rest.removeAt(0);
+        if (sr.isEmpty && rest.isNotEmpty) sr = rest.removeAt(0);
       }
 
       parsedRows.add({'num': num, 'fr': fr, 'sr': sr});
@@ -752,16 +743,12 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     if (parsedRows.isEmpty || !mounted) return;
 
-    // Find the next available row after existing entries.
     int startIndex = numControllers.indexWhere(
       (controller) => controller.text.trim().isEmpty,
     );
 
-    if (startIndex == -1) {
-      startIndex = numControllers.length;
-    }
+    if (startIndex == -1) startIndex = numControllers.length;
 
-    // Ensure enough rows exist for all pasted entries.
     while (numControllers.length < startIndex + parsedRows.length &&
         numControllers.length < 200) {
       addNewRow();
