@@ -46,6 +46,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   final Set<int> warnedDuplicateRows = {};
   final Map<TextEditingController, bool> _numberWasEmpty = {};
   final ValueNotifier<int> amountRevision = ValueNotifier<int>(0);
+  final FocusNode _undoFocus = FocusNode(canRequestFocus: false);
+  final FocusNode _redoFocus = FocusNode(canRequestFocus: false);
 
   final TextEditingController nameController = TextEditingController();
 
@@ -114,11 +116,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   }
 
   void _applySnapshot(String snap) {
+    final previousFocus = FocusManager.instance.primaryFocus;
     _applyingHistory = true;
 
     try {
-      hideKeyboard();
-
       final rows =
           (jsonDecode(snap) as List<dynamic>)
               .map((item) => Map<String, dynamic>.from(item as Map))
@@ -154,6 +155,13 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     if (mounted) setState(() {});
     amountRevision.value++;
     _scheduleWorkingSave();
+
+    // Keep the keyboard open on the field the user was typing in.
+    if (previousFocus != null && previousFocus.canRequestFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) previousFocus.requestFocus();
+      });
+    }
   }
 
   void _undo() {
@@ -2276,6 +2284,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   void dispose() {
     _workingSaveTimer?.cancel();
     _historyTimer?.cancel();
+    _undoFocus.dispose();
+    _redoFocus.dispose();
 
     // Save the latest working list before disposing.
     _saveWorkingState();
@@ -2547,9 +2557,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                               width: 26,
                               child: IconButton(
                                 tooltip: 'Undo',
+                                focusNode: _undoFocus,
                                 onPressed:
-                                    _undoStack.isNotEmpty ||
-                                            _buildSnapshot() != _currentSnap
+                                    (_undoStack.isNotEmpty ||
+                                            _historyTimer != null)
                                         ? _undo
                                         : null,
                                 icon: const Icon(Icons.undo),
@@ -2562,6 +2573,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                               width: 26,
                               child: IconButton(
                                 tooltip: 'Redo',
+                                focusNode: _redoFocus,
                                 onPressed: _redoStack.isNotEmpty ? _redo : null,
                                 icon: const Icon(Icons.redo),
                                 iconSize: 18,
