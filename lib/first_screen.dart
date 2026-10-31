@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:token_taker/amount_input_formatter.dart';
 import 'package:token_taker/saved_tokens.dart';
 import 'package:token_taker/second_screen.dart';
 import 'dart:io';
@@ -906,9 +905,29 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   //===================Paste=========================
   Future<void> pasteTokenData() async {
     final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = clipboardData?.text;
+    final rawText = clipboardData?.text;
 
-    if (text == null || text.trim().isEmpty) return;
+    if (rawText == null || rawText.trim().isEmpty) return;
+
+    // Remove WhatsApp headers such as:
+    //   [30/10, 1:52 pm] Sujoy Chakma (t):
+    //   [30/10/2026, 1:52:10 PM] Name:
+    //   30/10/2026, 1:52 pm - Name:
+    // Each header is replaced with a line break, so the message after it
+    // (e.g. "45=10") is kept, even when a header is glued to the previous
+    // line like "12-180[30/10, 1:52 pm] Name: Fr."
+    final whatsappHeader = RegExp(
+      r'\[\s*\d{1,2}[/.\-]\d{1,2}(?:[/.\-]\d{2,4})?,?\s*'
+      r'\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?\s*\]\s*[^:\n\]]*:'
+      r'|'
+      r'\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4},?\s*'
+      r'\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?\s*[-–]\s*[^:\n]*:',
+      caseSensitive: false,
+    );
+
+    final text = rawText.replaceAll(whatsappHeader, '\n');
+
+    if (text.trim().isEmpty) return;
 
     final parsedRows = <Map<String, String>>[];
 
@@ -2434,10 +2453,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
               width: double.infinity,
               enabled: isFirstFilled(index),
               keyboardType: TextInputType.text,
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'[0-9Kk ]')),
-                LengthLimitingTextInputFormatter(5),
-              ],
+              inputFormatters: [AmountInputFormatter()],
               onChanged: (val) {
                 if (val.endsWith(' ')) {
                   handleSpaceInput(srControllers[index], val, index, 'sr');
@@ -2831,5 +2847,24 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         ],
       ),
     );
+  }
+}
+
+class AmountInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text;
+
+    // Allow up to 5 digits, optional I at the end,
+    // or one trailing space for keyboard navigation.
+    if (RegExp(r'^\d{0,5}[Ii]?$').hasMatch(text) ||
+        RegExp(r'^\d{0,5}[Ii]? $').hasMatch(text)) {
+      return newValue;
+    }
+
+    return oldValue;
   }
 }
