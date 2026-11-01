@@ -489,6 +489,16 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
           ),
         ),
         PopupMenuItem(
+          value: 'new_token',
+          child: Row(
+            children: [
+              Icon(Icons.note_add_outlined),
+              SizedBox(width: 12),
+              Text('Save to Draft'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
           value: 'copy',
           child: Row(
             children: [Icon(Icons.copy), SizedBox(width: 12), Text('Copy')],
@@ -531,6 +541,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       switch (value) {
         case 'drafts':
           _showDrafts();
+          break;
+        case 'new_token':
+          _createNewToken();
           break;
         case 'copy':
           _copyTokenData();
@@ -779,18 +792,64 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                 Expanded(child: Text('How to Use')),
               ],
             ),
-            content: const SingleChildScrollView(
+            content: SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    '1. Fill Multiple Amount Boxes',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    'Enter 10i in an amount box to fill eligible blank '
-                    'amount boxes below with ₹10.',
+                  InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () {
+                      Navigator.pop(context); // close How to Use
+                      _showIAnimationDialog();
+                    },
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE6F4FF),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _primaryColor.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '1. Fill Multiple Amount Boxes',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: _primaryColor,
+                                  ),
+                                ),
+                              ),
+                              Icon(
+                                Icons.play_circle_outline,
+                                color: _primaryColor,
+                                size: 20,
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'Enter 10i in an amount box to fill eligible blank '
+                            'amount boxes below with ₹10.',
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'Tap to watch',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: _primaryColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                   SizedBox(height: 12),
                   Text(
@@ -819,6 +878,44 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  void _showIAnimationDialog() {
+    showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+            title: const Row(
+              children: [
+                Icon(Icons.touch_app, color: _primaryColor),
+                SizedBox(width: 8),
+                Expanded(child: Text('Fill Multiple Boxes')),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _IGuideAnimation(showFr: !isTRMode),
+                const SizedBox(height: 14),
+                const Text(
+                  'Type 10i in an amount box. The app fills the blank '
+                  'amount boxes below with ₹10.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
                 child: const Text('Close'),
               ),
             ],
@@ -862,61 +959,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 18),
 
-              // Faded app preview.
-              Opacity(
-                opacity: 0.45,
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        _guideBox('Num', true),
-                        const SizedBox(width: 5),
-                        if (!isTRMode) ...[
-                          _guideBox('FR', false),
-                          const SizedBox(width: 5),
-                        ],
-                        _guideBox('SR / TR', false),
-                      ],
-                    ),
-                    const SizedBox(height: 7),
-                    Row(
-                      children: [
-                        _guideBox('10', true),
-                        const SizedBox(width: 5),
-                        if (!isTRMode) ...[
-                          _guideBox('10', false),
-                          const SizedBox(width: 5),
-                        ],
-                        _guideBox('10', false),
-                      ],
-                    ),
-                    const SizedBox(height: 7),
-                    Row(
-                      children: [
-                        _guideBox('11', true),
-                        const SizedBox(width: 5),
-                        if (!isTRMode) ...[
-                          _guideBox('10', false),
-                          const SizedBox(width: 5),
-                        ],
-                        _guideBox('10', false),
-                      ],
-                    ),
-                    const SizedBox(height: 7),
-                    Row(
-                      children: [
-                        _guideBox('12', true),
-                        const SizedBox(width: 5),
-                        if (!isTRMode) ...[
-                          _guideBox('10', false),
-                          const SizedBox(width: 5),
-                        ],
-                        _guideBox('10', false),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+              // Animated preview: typing 10i fills the boxes below.
+              _IGuideAnimation(showFr: !isTRMode),
 
               const SizedBox(height: 16),
 
@@ -983,24 +1027,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     );
 
     await prefs.setBool(_uGuideShownKey, true);
-  }
-
-  Widget _guideBox(String value, bool isNum) {
-    return Expanded(
-      child: Container(
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(vertical: 9),
-        decoration: BoxDecoration(
-          color: isNum ? const Color(0xFFE6F4FF) : Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: _borderColor),
-        ),
-        child: Text(
-          value,
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
   }
 
   Future<void> _persistDrafts() async {
@@ -2992,20 +3018,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                         ),
                       ),
 
-                      // New Token
-                      Expanded(
-                        child: IconButton(
-                          tooltip: 'New token',
-                          onPressed: _createNewToken,
-                          icon: const Icon(
-                            Icons.note_add_outlined,
-                            color: Colors.blue,
-                          ),
-                          iconSize: 25,
-                          padding: EdgeInsets.zero,
-                        ),
-                      ),
-
                       // Paste
                       Expanded(
                         child: IconButton(
@@ -3024,7 +3036,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                         child: Row(
                           children: [
                             SizedBox(
-                              width: 26,
+                              width: 40,
+                              height: 40,
                               child: IconButton(
                                 tooltip: 'Undo',
                                 focusNode: _undoFocus,
@@ -3034,19 +3047,20 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                                         ? _undo
                                         : null,
                                 icon: const Icon(Icons.undo),
-                                iconSize: 18,
+                                iconSize: 20,
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(),
                               ),
                             ),
                             SizedBox(
-                              width: 26,
+                            width: 40,
+                              height: 40,
                               child: IconButton(
                                 tooltip: 'Redo',
                                 focusNode: _redoFocus,
                                 onPressed: _redoStack.isNotEmpty ? _redo : null,
                                 icon: const Icon(Icons.redo),
-                                iconSize: 18,
+                                iconSize: 20,
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(),
                               ),
@@ -3145,5 +3159,166 @@ class AmountInputFormatter extends TextInputFormatter {
     }
 
     return oldValue;
+  }
+}
+
+class _IGuideAnimation extends StatefulWidget {
+  final bool showFr;
+
+  const _IGuideAnimation({required this.showFr});
+
+  @override
+  State<_IGuideAnimation> createState() => _IGuideAnimationState();
+}
+
+class _IGuideAnimationState extends State<_IGuideAnimation> {
+  static const Color _primary = Color(0xFF2878D0);
+  static const Color _border = Color(0xFFD5D9E0);
+  static const Color _numFill = Color(0xFFE6F4FF);
+  static const Color _filledFlash = Color(0xFFE3F6E8);
+
+  static const List<String> _nums = ['10', '11', '12', '13'];
+
+  // Steps:
+  // 0 empty | 1 "1" | 2 "10" | 3 "10i"
+  // 4 row 2 filled | 5 row 3 filled | 6 row 4 filled
+  // 7-9 hold, then loop
+  static const int _totalSteps = 7;
+
+  Timer? _timer;
+  int _step = 0;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _timer = Timer.periodic(const Duration(milliseconds: 400), (_) {
+      if (!mounted) return;
+      setState(() {
+        _step = (_step + 1) % _totalSteps;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  // Text shown in the animated amount box of each row.
+  // Text shown in the animated amount box of each row.
+  String _amountFor(int row) {
+    if (row == 0) {
+      if (_step == 0) return '';
+      if (_step == 1) return '1';
+      if (_step == 2) return '10';
+      if (_step == 3) return '10i';
+      return '10'; // "i" disappears at the same moment the boxes fill
+    }
+
+    // Every box below fills at the same time, right after "10i".
+    return _step >= 4 ? '10' : '';
+  }
+
+  Widget _label(String text) {
+    return Expanded(
+      child: Center(
+        child: Text(
+          text,
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1,
+            color: Color(0xFF687282),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _box({
+    required String text,
+    bool isNum = false,
+    bool focused = false,
+    bool justFilled = false,
+  }) {
+    final hasI = text.endsWith('i');
+    final amount = hasI ? text.substring(0, text.length - 1) : text;
+
+    return Expanded(
+      child: AnimatedScale(
+        scale: justFilled ? 1.07 : 1.0,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOutBack,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          height: 38,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color:
+                isNum
+                    ? _numFill
+                    : justFilled
+                    ? _filledFlash
+                    : Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: focused ? _primary : _border,
+              width: focused ? 1.7 : 1,
+            ),
+          ),
+          child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(text: amount),
+                if (hasI)
+                  const TextSpan(text: 'i', style: TextStyle(color: _primary)),
+              ],
+            ),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isTyping = _step >= 1 && _step <= 3;
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            _label('Num'),
+            const SizedBox(width: 5),
+            if (widget.showFr) ...[_label('FR'), const SizedBox(width: 5)],
+            _label(widget.showFr ? 'SR' : 'TR'),
+          ],
+        ),
+        const SizedBox(height: 6),
+        for (int row = 0; row < _nums.length; row++) ...[
+          Row(
+            children: [
+              _box(text: _nums[row], isNum: true),
+              const SizedBox(width: 5),
+
+              // The animated amount box is the first amount column:
+              // FR in FR/SR mode, TR in TR mode.
+              _box(
+                text: _amountFor(row),
+                focused: row == 0 && isTyping,
+                justFilled: row > 0 && _step == 4,
+              ),
+
+              // The second amount column (SR) stays empty in FR/SR mode.
+              if (widget.showFr) ...[const SizedBox(width: 5), _box(text: '')],
+            ],
+          ),
+          if (row != _nums.length - 1) const SizedBox(height: 6),
+        ],
+      ],
+    );
   }
 }
