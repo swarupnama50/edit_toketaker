@@ -23,15 +23,88 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   static const String _workingStateKey = 'token_taker_current_working_state';
   static const String _lastGalleryViewedKey = 'token_taker_last_gallery_viewed';
-  // Add these colors inside _FirstScreenState.
-  // White/gray number boxes, clean amount fields, and a blue accent.
-
   static const Color _pageColor = Color(0xFFF5F6F8);
-
   static const Color _primaryColor = Color(0xFF2878D0);
   static const Color _borderColor = Color(0xFFD5D9E0);
   static const String _saveToDeviceGalleryKey = 'save_to_device_gallery';
   static const String _uGuideShownKey = 'u_guide_shown';
+  static const String _autoTrEnabledKey = 'auto_tr_enabled';
+  static const String _autoTrHourKey = 'auto_tr_hour';
+  static const String _autoTrMinuteKey = 'auto_tr_minute';
+  static const String _autoTrLastOnKey = 'auto_tr_last_on_date';
+  static const String _autoTrPendingOffKey = 'auto_tr_pending_off';
+
+  // TR mode is switched off automatically at 7:00 PM.
+  static const int _autoTrEndMinutes = 19 * 60;
+  Timer? _autoTrTimer;
+  String _todayKey() {
+    final n = DateTime.now();
+    return '${n.year}-${n.month}-${n.day}';
+  }
+
+  Future<void> _setModeAutomatically(bool tr, String message) async {
+    if (!mounted) return;
+
+    setState(() {
+      isTRMode = tr;
+    });
+
+    await _saveMode(tr);
+    _scheduleWorkingSave();
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.only(left: 12, right: 12, bottom: 60),
+        ),
+      );
+  }
+
+  Future<void> _checkAutoTrSchedule() async {
+    if (!_modeLoaded || !mounted) return;
+
+    final prefs = await SharedPreferences.getInstance();
+
+    if (!(prefs.getBool(_autoTrEnabledKey) ?? false)) return;
+
+    final startMinutes =
+        (prefs.getInt(_autoTrHourKey) ?? 15) * 60 +
+        (prefs.getInt(_autoTrMinuteKey) ?? 0);
+
+    final now = DateTime.now();
+    final nowMinutes = now.hour * 60 + now.minute;
+    final today = _todayKey();
+
+    final lastOn = prefs.getString(_autoTrLastOnKey);
+    final pendingOff = prefs.getBool(_autoTrPendingOffKey) ?? false;
+
+    // 1. Turn TR off at 7 PM (also covers the app being closed overnight).
+    if (pendingOff && (nowMinutes >= _autoTrEndMinutes || lastOn != today)) {
+      await prefs.setBool(_autoTrPendingOffKey, false);
+
+      if (isTRMode) {
+        await _setModeAutomatically(false, 'TR mode turned off (FR, SR)');
+      }
+    }
+
+    // 2. Turn TR on once per day when the start time is reached.
+    if (nowMinutes >= startMinutes &&
+        nowMinutes < _autoTrEndMinutes &&
+        lastOn != today) {
+      await prefs.setString(_autoTrLastOnKey, today);
+      await prefs.setBool(_autoTrPendingOffKey, true);
+
+      if (!isTRMode) {
+        await _setModeAutomatically(true, 'TR mode turned on');
+      }
+    }
+  }
 
   bool _saveToDeviceGallery = true;
 
@@ -428,6 +501,12 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     final savedValue = prefs.getBool(_saveToDeviceGalleryKey) ?? true;
 
+    bool autoTrEnabled = prefs.getBool(_autoTrEnabledKey) ?? false;
+    TimeOfDay autoTrTime = TimeOfDay(
+      hour: prefs.getInt(_autoTrHourKey) ?? 15,
+      minute: prefs.getInt(_autoTrMinuteKey) ?? 0,
+    );
+
     if (!mounted) return;
 
     setState(() {
@@ -447,28 +526,154 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                   Text('Settings'),
                 ],
               ),
-              content: SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text(
-                  'Save to device Gallery',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                subtitle: const Text(
-                  'Show newly downloaded images in your device gallery',
-                ),
-                value: _saveToDeviceGallery,
-                activeTrackColor: _primaryColor,
-                onChanged: (value) async {
-                  setDialogState(() {
-                    _saveToDeviceGallery = value;
-                  });
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'Save to device Gallery',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: const Text(
+                        'Show newly downloaded images in your device gallery',
+                      ),
+                      value: _saveToDeviceGallery,
+                      activeTrackColor: _primaryColor,
+                      onChanged: (value) async {
+                        setDialogState(() {
+                          _saveToDeviceGallery = value;
+                        });
 
-                  setState(() {
-                    _saveToDeviceGallery = value;
-                  });
+                        setState(() {
+                          _saveToDeviceGallery = value;
+                        });
 
-                  await prefs.setBool(_saveToDeviceGalleryKey, value);
-                },
+                        await prefs.setBool(_saveToDeviceGalleryKey, value);
+                      },
+                    ),
+                    const Divider(),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'Auto TR mode',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: const Text(
+                        'Switch to TR mode daily at the set time. '
+                        'It turns off automatically at 7:00 PM.',
+                      ),
+                      value: autoTrEnabled,
+                      activeTrackColor: _primaryColor,
+                      onChanged: (value) async {
+                        setDialogState(() {
+                          autoTrEnabled = value;
+                        });
+
+                        await prefs.setBool(_autoTrEnabledKey, value);
+
+                        if (value) {
+                          // Allow it to apply today if we're inside the window.
+                          await prefs.remove(_autoTrLastOnKey);
+                          await _checkAutoTrSchedule();
+                        } else {
+                          await prefs.setBool(_autoTrPendingOffKey, false);
+                        }
+                      },
+                    ),
+                    if (autoTrEnabled)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(
+                          Icons.access_time,
+                          color: _primaryColor,
+                        ),
+                        title: const Text('TR mode starts at'),
+                        subtitle: const Text('Ends daily at 7:00 PM'),
+                        trailing: Text(
+                          autoTrTime.format(context),
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: _primaryColor,
+                          ),
+                        ),
+                        onTap: () async {
+                          final picked = await showTimePicker(
+                            context: dialogContext,
+                            initialTime: autoTrTime,
+                            helpText: 'TR mode start time (before 7:00 PM)',
+                            initialEntryMode:
+                                TimePickerEntryMode
+                                    .input, // text input mode by default
+                            builder: (context, child) {
+                              return Theme(
+                                data: Theme.of(context).copyWith(
+                                  colorScheme: Theme.of(context).colorScheme
+                                      .copyWith(primary: _primaryColor),
+                                  timePickerTheme: TimePickerThemeData(
+                                    // Selected AM/PM gets a blue background.
+                                    dayPeriodColor:
+                                        WidgetStateColor.resolveWith(
+                                          (states) =>
+                                              states.contains(
+                                                    WidgetState.selected,
+                                                  )
+                                                  ? _primaryColor
+                                                  : Colors.transparent,
+                                        ),
+                                    // Selected AM/PM text is white, the other one is gray.
+                                    dayPeriodTextColor:
+                                        WidgetStateColor.resolveWith(
+                                          (states) =>
+                                              states.contains(
+                                                    WidgetState.selected,
+                                                  )
+                                                  ? Colors.white
+                                                  : Colors.grey.shade600,
+                                        ),
+                                    dayPeriodBorderSide: const BorderSide(
+                                      color: _borderColor,
+                                    ),
+                                  ),
+                                ),
+                                child: child!,
+                              );
+                            },
+                          );
+
+                          if (picked == null) return;
+
+                          if (picked.hour * 60 + picked.minute >=
+                              _autoTrEndMinutes) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(this.context)
+                              ..hideCurrentSnackBar()
+                              ..showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Please choose a time before 7:00 PM',
+                                  ),
+                                ),
+                              );
+                            return;
+                          }
+
+                          setDialogState(() {
+                            autoTrTime = picked;
+                          });
+
+                          await prefs.setInt(_autoTrHourKey, picked.hour);
+                          await prefs.setInt(_autoTrMinuteKey, picked.minute);
+
+                          // Re-apply today if the new time is already inside the window.
+                          await prefs.remove(_autoTrLastOnKey);
+                          await _checkAutoTrSchedule();
+                        },
+                      ),
+                  ],
+                ),
               ),
               actions: [
                 TextButton(
@@ -893,11 +1098,14 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkAutoTrSchedule();
+    }
+
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _workingSaveTimer?.cancel();
-
       _saveWorkingState();
     }
   }
@@ -910,7 +1118,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     if (rawText == null || rawText.trim().isEmpty) return;
 
     // Remove WhatsApp headers such as:
-    //   [30/10, 1:52 pm] Sujoy Chakma (t):
+    //   [30/10, 1:52 pm] User Name (t):
     //   [30/10/2026, 1:52:10 PM] Name:
     //   30/10/2026, 1:52 pm - Name:
     // Each header is replaced with a line break, so the message after it
@@ -1439,6 +1647,12 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     _loadMode();
     _loadDrafts();
     _loadTodayReceiptCount();
+
+    // Check every 20 seconds while the app is open.
+    _autoTrTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => _checkAutoTrSchedule(),
+    );
   }
 
   Future<void> _loadMode() async {
@@ -1448,6 +1662,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     if (!mounted) return;
 
     await _restoreWorkingState(savedMode);
+    await _checkAutoTrSchedule();
 
     if (mounted) {
       await _showFirstInstallGuide();
@@ -2477,6 +2692,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     _historyTimer?.cancel();
     _undoFocus.dispose();
     _redoFocus.dispose();
+    _autoTrTimer?.cancel();
 
     // Save the latest working list before disposing.
     _saveWorkingState();
