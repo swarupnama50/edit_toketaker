@@ -46,6 +46,11 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     if (!mounted) return;
 
     setState(() {
+      if (tr) {
+        _convertAmountsForTRMode();
+      } else {
+        _convertAmountsForFRSRMode();
+      }
       isTRMode = tr;
     });
 
@@ -149,6 +154,52 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     }
 
     return jsonEncode(rows);
+  }
+
+  // Rows whose TR amount was moved from the FR box.
+  final Set<TextEditingController> _trFromFr = {};
+
+  // Switching to TR mode:
+  // FR only   -> FR amount goes to TR (remembered, so it returns to FR later)
+  // SR only   -> SR amount stays as TR
+  // FR and SR -> SR amount stays as TR, FR is dropped
+  void _convertAmountsForTRMode() {
+    _trFromFr.clear();
+
+    for (int i = 0; i < numControllers.length; i++) {
+      final fr = frControllers[i].text.trim();
+      final sr = srControllers[i].text.trim();
+
+      if (sr.isEmpty && fr.isNotEmpty) {
+        srControllers[i].text = fr;
+        _trFromFr.add(srControllers[i]);
+      }
+
+      if (fr.isNotEmpty) {
+        frControllers[i].clear();
+      }
+    }
+
+    warnedDuplicateRows.clear();
+    amountRevision.value++;
+  }
+
+  // Switching back to FR, SR mode:
+  // TR amounts that came from FR go back to FR.
+  // All other TR amounts stay in SR.
+  void _convertAmountsForFRSRMode() {
+    for (int i = 0; i < numControllers.length; i++) {
+      final tr = srControllers[i].text.trim();
+
+      if (tr.isNotEmpty && _trFromFr.contains(srControllers[i])) {
+        frControllers[i].text = tr;
+        srControllers[i].clear();
+      }
+    }
+
+    _trFromFr.clear();
+    warnedDuplicateRows.clear();
+    amountRevision.value++;
   }
 
   void _scheduleHistoryRecord() {
@@ -1354,6 +1405,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     nameController.clear();
     warnedDuplicateRows.clear();
+    _trFromFr.clear();
     _activeDraftId = null;
     _resetHistory();
 
@@ -1443,7 +1495,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         frControllers[i].text = rows[i]['fr'] as String? ?? '';
         srControllers[i].text = rows[i]['sr'] as String? ?? '';
       }
-
+      _trFromFr.clear();
       warnedDuplicateRows.clear();
       amountRevision.value++;
     });
@@ -2112,6 +2164,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     _workingSaveTimer?.cancel();
 
     setState(() {
+      _trFromFr.clear();
       // Dispose all existing controllers and focus nodes.
       for (final controller in numControllers) {
         _numberWasEmpty.remove(controller);
@@ -2350,6 +2403,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     if (numControllers.length <= 1) return;
 
     _numberWasEmpty.remove(numControllers[index]);
+    _trFromFr.remove(srControllers[index]);
 
     numControllers[index].dispose();
     frControllers[index].dispose();
@@ -2420,6 +2474,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       frControllers[targetIndex].text = frControllers[sourceIndex].text;
 
       srControllers[targetIndex].text = srControllers[sourceIndex].text;
+
+      if (_trFromFr.remove(srControllers[sourceIndex])) {
+        _trFromFr.add(srControllers[targetIndex]);
+      }
 
       numControllers[sourceIndex].clear();
       frControllers[sourceIndex].clear();
@@ -2772,6 +2830,11 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                 final newMode = !isTRMode;
 
                 setState(() {
+                  if (newMode) {
+                    _convertAmountsForTRMode();
+                  } else {
+                    _convertAmountsForFRSRMode();
+                  }
                   isTRMode = newMode;
                 });
 
