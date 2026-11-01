@@ -71,43 +71,50 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       );
   }
 
+  bool _checkingAutoTr = false;
+
   Future<void> _checkAutoTrSchedule() async {
-    if (!_modeLoaded || !mounted) return;
+    if (_checkingAutoTr || !_modeLoaded || !mounted) return;
+    _checkingAutoTr = true;
 
-    final prefs = await SharedPreferences.getInstance();
+    try {
+      final prefs = await SharedPreferences.getInstance();
 
-    if (!(prefs.getBool(_autoTrEnabledKey) ?? false)) return;
+      if (!(prefs.getBool(_autoTrEnabledKey) ?? false)) return;
 
-    final startMinutes =
-        (prefs.getInt(_autoTrHourKey) ?? 15) * 60 +
-        (prefs.getInt(_autoTrMinuteKey) ?? 0);
+      final startMinutes =
+          (prefs.getInt(_autoTrHourKey) ?? 15) * 60 +
+          (prefs.getInt(_autoTrMinuteKey) ?? 0);
 
-    final now = DateTime.now();
-    final nowMinutes = now.hour * 60 + now.minute;
-    final today = _todayKey();
+      final now = DateTime.now();
+      final nowMinutes = now.hour * 60 + now.minute;
+      final today = _todayKey();
 
-    final lastOn = prefs.getString(_autoTrLastOnKey);
-    final pendingOff = prefs.getBool(_autoTrPendingOffKey) ?? false;
+      final lastOn = prefs.getString(_autoTrLastOnKey);
+      final pendingOff = prefs.getBool(_autoTrPendingOffKey) ?? false;
 
-    // 1. Turn TR off at 7 PM (also covers the app being closed overnight).
-    if (pendingOff && (nowMinutes >= _autoTrEndMinutes || lastOn != today)) {
-      await prefs.setBool(_autoTrPendingOffKey, false);
+      // 1. Turn TR off at 7 PM (also covers the app being closed overnight).
+      if (pendingOff && (nowMinutes >= _autoTrEndMinutes || lastOn != today)) {
+        await prefs.setBool(_autoTrPendingOffKey, false);
 
-      if (isTRMode) {
-        await _setModeAutomatically(false, 'TR mode turned off (FR, SR)');
+        if (isTRMode) {
+          await _setModeAutomatically(false, 'TR mode turned off (FR, SR)');
+        }
       }
-    }
 
-    // 2. Turn TR on once per day when the start time is reached.
-    if (nowMinutes >= startMinutes &&
-        nowMinutes < _autoTrEndMinutes &&
-        lastOn != today) {
-      await prefs.setString(_autoTrLastOnKey, today);
-      await prefs.setBool(_autoTrPendingOffKey, true);
+      // 2. Turn TR on once per day when the start time is reached.
+      if (nowMinutes >= startMinutes &&
+          nowMinutes < _autoTrEndMinutes &&
+          lastOn != today) {
+        await prefs.setString(_autoTrLastOnKey, today);
+        await prefs.setBool(_autoTrPendingOffKey, true);
 
-      if (!isTRMode) {
-        await _setModeAutomatically(true, 'TR mode turned on');
+        if (!isTRMode) {
+          await _setModeAutomatically(true, 'TR mode turned on');
+        }
       }
+    } finally {
+      _checkingAutoTr = false;
     }
   }
 
@@ -159,25 +166,33 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   // Rows whose TR amount was moved from the FR box.
   final Set<TextEditingController> _trFromFr = {};
 
+  // FR amounts hidden when switching to TR mode (row had both FR and SR).
+  final Map<TextEditingController, String> _hiddenFr = {};
+
   // Switching to TR mode:
   // FR only   -> FR amount goes to TR (remembered, so it returns to FR later)
   // SR only   -> SR amount stays as TR
-  // FR and SR -> SR amount stays as TR, FR is dropped
+  // FR and SR -> SR amount stays as TR, FR is remembered and returns later
   void _convertAmountsForTRMode() {
     _trFromFr.clear();
+    _hiddenFr.clear();
 
     for (int i = 0; i < numControllers.length; i++) {
       final fr = frControllers[i].text.trim();
       final sr = srControllers[i].text.trim();
 
-      if (sr.isEmpty && fr.isNotEmpty) {
+      if (fr.isEmpty) continue;
+
+      if (sr.isEmpty) {
+        // FR only -> becomes TR, goes back to FR later
         srControllers[i].text = fr;
         _trFromFr.add(srControllers[i]);
+      } else {
+        // FR and SR -> SR stays as TR, remember FR so it can come back
+        _hiddenFr[srControllers[i]] = fr;
       }
 
-      if (fr.isNotEmpty) {
-        frControllers[i].clear();
-      }
+      frControllers[i].clear();
     }
 
     warnedDuplicateRows.clear();
@@ -186,7 +201,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   // Switching back to FR, SR mode:
   // TR amounts that came from FR go back to FR.
-  // All other TR amounts stay in SR.
+  // Hidden FR amounts are restored. All other TR amounts stay in SR.
   void _convertAmountsForFRSRMode() {
     for (int i = 0; i < numControllers.length; i++) {
       final tr = srControllers[i].text.trim();
@@ -194,10 +209,16 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       if (tr.isNotEmpty && _trFromFr.contains(srControllers[i])) {
         frControllers[i].text = tr;
         srControllers[i].clear();
+      } else {
+        final hidden = _hiddenFr[srControllers[i]];
+        if (hidden != null && hidden.isNotEmpty) {
+          frControllers[i].text = hidden;
+        }
       }
     }
 
     _trFromFr.clear();
+    _hiddenFr.clear();
     warnedDuplicateRows.clear();
     amountRevision.value++;
   }
@@ -1082,6 +1103,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         'num': numControllers[i].text,
         'fr': frControllers[i].text,
         'sr': srControllers[i].text,
+        'hfr': _hiddenFr[srControllers[i]] ?? '',
       });
     }
 
@@ -1150,6 +1172,13 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         numControllers[i].text = rows[i]['num'] as String? ?? '';
         frControllers[i].text = rows[i]['fr'] as String? ?? '';
         srControllers[i].text = rows[i]['sr'] as String? ?? '';
+      }
+
+      // Restore FR amounts that were hidden while in TR mode.
+      _hiddenFr.clear();
+      for (int i = 0; i < rows.length && i < srControllers.length; i++) {
+        final hfr = rows[i]['hfr'] as String? ?? '';
+        if (hfr.isNotEmpty) _hiddenFr[srControllers[i]] = hfr;
       }
 
       nameController.text = decoded['name'] as String? ?? '';
@@ -1432,6 +1461,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     nameController.clear();
     warnedDuplicateRows.clear();
     _trFromFr.clear();
+    _hiddenFr.clear();
     _activeDraftId = null;
     _resetHistory();
 
@@ -1522,6 +1552,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         srControllers[i].text = rows[i]['sr'] as String? ?? '';
       }
       _trFromFr.clear();
+      _hiddenFr.clear();
       warnedDuplicateRows.clear();
       amountRevision.value++;
     });
@@ -2191,6 +2222,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     setState(() {
       _trFromFr.clear();
+      _hiddenFr.clear();
       // Dispose all existing controllers and focus nodes.
       for (final controller in numControllers) {
         _numberWasEmpty.remove(controller);
@@ -2430,6 +2462,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     _numberWasEmpty.remove(numControllers[index]);
     _trFromFr.remove(srControllers[index]);
+    _hiddenFr.remove(srControllers[index]);
 
     numControllers[index].dispose();
     frControllers[index].dispose();
@@ -2504,6 +2537,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       if (_trFromFr.remove(srControllers[sourceIndex])) {
         _trFromFr.add(srControllers[targetIndex]);
       }
+
+      final hidden = _hiddenFr.remove(srControllers[sourceIndex]);
+      _hiddenFr.remove(srControllers[targetIndex]);
+      if (hidden != null) _hiddenFr[srControllers[targetIndex]] = hidden;
 
       numControllers[sourceIndex].clear();
       frControllers[sourceIndex].clear();
@@ -3053,7 +3090,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                               ),
                             ),
                             SizedBox(
-                            width: 40,
+                              width: 40,
                               height: 40,
                               child: IconButton(
                                 tooltip: 'Redo',
