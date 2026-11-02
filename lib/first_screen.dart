@@ -59,16 +59,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          duration: const Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.only(left: 12, right: 12, bottom: 60),
-        ),
-      );
+    _showAppSnackBar(message);
   }
 
   bool _checkingAutoTr = false;
@@ -450,9 +441,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     if (!mounted) return;
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Copied token data')));
+    _showAppSnackBar('Copied token data');
   }
 
   Future<void> _loadTodayReceiptCount() async {
@@ -733,15 +722,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                           if (picked.hour * 60 + picked.minute >=
                               _autoTrEndMinutes) {
                             if (!mounted) return;
-                            ScaffoldMessenger.of(this.context)
-                              ..hideCurrentSnackBar()
-                              ..showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Please choose a time before 7:00 PM',
-                                  ),
-                                ),
-                              );
+                            _showAppSnackBar(
+                              'Please choose a time before 7:00 PM',
+                            );
                             return;
                           }
 
@@ -1314,7 +1297,20 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
           continue;
         }
       } else {
-        // AP / HP, also A!P and H-P
+        // AP / HP, also A!P and H-P, and spelled-out words such as
+        // "All Pair", "Aal par", "Alfair", "Half Pair", "Halfpair".
+        // Letters-only text, so the "i" amount trick etc. is not affected.
+        final allPair = RegExp(r'^A[AL]{0,3}[PF][AEI]{0,2}RS?$');
+        final halfPair = RegExp(r'^(?=.*[FP])H[AEL]{0,3}F?P?[AEI]{0,2}RS?$');
+
+        bool isAllPair(String s) => allPair.hasMatch(s);
+        bool isHalfPair(String s) => halfPair.hasMatch(s);
+
+        final second =
+            tokens.length > 1 && !digitsOnly.hasMatch(tokens[1])
+                ? tokens[1]
+                : '';
+
         if (first.startsWith('AP') || first.startsWith('HP')) {
           num = first.substring(0, 2);
           next = 1;
@@ -1323,11 +1319,26 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
             tokens[1].startsWith('P')) {
           num = '${first}P';
           next = 2;
+        } else if (isAllPair(first)) {
+          // "Alfair", "Allpair"
+          num = 'AP';
+          next = 1;
+        } else if (isHalfPair(first)) {
+          // "Halfpair"
+          num = 'HP';
+          next = 1;
+        } else if (second.isNotEmpty && isAllPair(first + second)) {
+          // "All Pair", "Aal par"
+          num = 'AP';
+          next = 2;
+        } else if (second.isNotEmpty && isHalfPair(first + second)) {
+          // "Half Pair"
+          num = 'HP';
+          next = 2;
         } else {
           continue;
         }
       }
-
       // ---------- 2. Find the amounts ----------
       String? frLabel, srLabel, trLabel;
       final unlabelled = <String>[];
@@ -1483,16 +1494,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     _clearCurrentToken();
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text('Saved to Draft'),
-          duration: Duration(seconds: 1),
-          behavior: SnackBarBehavior.floating,
-          margin: EdgeInsets.only(left: 12, right: 12, bottom: 60),
-        ),
-      );
+    _showAppSnackBar('Saved to Draft', duration: const Duration(seconds: 1));
   }
 
   Future<void> _openDraft(Map<String, dynamic> draft) async {
@@ -1961,19 +1963,29 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     if (exists && !warnedDuplicateRows.contains(currentIndex) && mounted) {
       warnedDuplicateRows.add(currentIndex);
 
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('This number already exists'),
-            duration: Duration(seconds: 2),
-            behavior: SnackBarBehavior.floating,
-            margin: EdgeInsets.fromLTRB(12, 0, 12, 90),
-          ),
-        );
+      _showAppSnackBar('Number $value already exists');
     } else if (!exists) {
       warnedDuplicateRows.remove(currentIndex);
     }
+  }
+
+  void _showAppSnackBar(
+    String message, {
+    Duration duration = const Duration(seconds: 2),
+  }) {
+    if (!mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: duration,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 100),
+      ),
+    );
   }
 
   void handleSpaceInput(
@@ -2278,16 +2290,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     hideKeyboard();
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text('All cleared. Fresh token ready.'),
-          duration: Duration(seconds: 1),
-          behavior: SnackBarBehavior.floating,
-          margin: EdgeInsets.only(left: 12, right: 12, bottom: 60),
-        ),
-      );
+    _showAppSnackBar(
+      'All cleared. Fresh token ready.',
+      duration: const Duration(seconds: 1),
+    );
   }
   // ================= TOTAL LOGIC =================
 

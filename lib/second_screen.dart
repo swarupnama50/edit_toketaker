@@ -529,7 +529,9 @@ class _SecondScreenState extends State<SecondScreen> {
         ),
         duration: const Duration(seconds: 5),
         behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.fromLTRB(12, 0, 12, 80),
+
+        // Keep SnackBar above the bottom navigation bar.
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 100),
       ),
     );
   }
@@ -561,7 +563,7 @@ class _SecondScreenState extends State<SecondScreen> {
       final pngBytes = await _captureReceiptPng();
 
       if (pngBytes == null) {
-        _showMessage('Receipt capture failed. Check debug logs.');
+        _showMessage('Image capture failed.');
         return;
       }
 
@@ -600,7 +602,7 @@ class _SecondScreenState extends State<SecondScreen> {
 
       if (!saveToDeviceGallery) {
         _showMessage(
-          'Receipt saved in the app gallery.',
+          'Image saved in the app gallery.',
           onView: () => _viewSavedReceipt(file),
         );
         return;
@@ -614,7 +616,7 @@ class _SecondScreenState extends State<SecondScreen> {
 
       if (!hasAccess) {
         _showMessage(
-          'Receipt saved in the app, but Gallery permission was denied.',
+          'Image saved in the app, but Gallery permission was denied.',
           onView: () => _viewSavedReceipt(file),
         );
         return;
@@ -623,16 +625,16 @@ class _SecondScreenState extends State<SecondScreen> {
       await Gal.putImage(file.path);
 
       _showMessage(
-        'Receipt saved in the app and device Gallery.',
+        'Image saved in the app and device Gallery.',
         onView: () => _viewSavedReceipt(file),
       );
 
       _showMessage(
-        'Receipt saved successfully.',
+        'Image saved successfully.',
         onView: () => _viewSavedReceipt(file),
       );
     } catch (e) {
-      _showMessage('Could not save receipt: $e');
+      _showMessage('Could not save Image: $e');
     } finally {
       if (mounted) {
         setState(() => _isBusy = false);
