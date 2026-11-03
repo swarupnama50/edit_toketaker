@@ -2939,14 +2939,14 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                 Expanded(
                   child: Center(
                     child: Text(
-                      'Num',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1,
-                        color: Color(0xFF687282),
-                      ),
-                    ),
+  'Num(${numControllers.where((c) => c.text.trim().isNotEmpty).length})',
+  style: const TextStyle(
+    fontSize: 12,
+    fontWeight: FontWeight.w700,
+    letterSpacing: 1,
+    color: Color(0xFF687282),
+  ),
+),
                   ),
                 ),
                 const SizedBox(width: 3),
