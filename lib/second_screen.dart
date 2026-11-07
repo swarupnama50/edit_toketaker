@@ -593,6 +593,10 @@ class _SecondScreenState extends State<SecondScreen> {
       final file = File('${directory.path}/$fileName');
 
       await file.writeAsBytes(jpgBytes, flush: true);
+      _showMessage(
+        'Image saved successfully.',
+        onView: () => _viewSavedReceipt(file),
+      );
       await _loadTodayReceiptCount();
       await _loadSavedReceipts();
 
@@ -623,11 +627,6 @@ class _SecondScreenState extends State<SecondScreen> {
       }
 
       await Gal.putImage(file.path);
-
-      _showMessage(
-        'Image saved in the app and device Gallery.',
-        onView: () => _viewSavedReceipt(file),
-      );
 
       _showMessage(
         'Image saved successfully.',

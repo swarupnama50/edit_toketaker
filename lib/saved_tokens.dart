@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
 class SavedReceiptsScreen extends StatefulWidget {
   final List<File> receipts;
@@ -16,6 +19,7 @@ class SavedReceiptsScreen extends StatefulWidget {
 class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
   late List<File> _receipts;
   final Set<String> _selectedPaths = {};
+  Map<String, int> _totals = {};
 
   bool get _isSelecting => _selectedPaths.isNotEmpty;
 
@@ -24,6 +28,80 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     super.initState();
     _receipts = List<File>.from(widget.receipts);
     _sortReceipts();
+    _loadTotals();
+  }
+
+  Future<void> _loadTotals() async {
+    final totals = await ReceiptTotals.loadAll();
+    if (mounted) setState(() => _totals = totals);
+  }
+
+  /// Reads "Total: ₹ 1250" from the receipt image.
+  Future<int?> _readTotalFromImage(File file) async {
+    final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
+    try {
+      final result = await recognizer.processImage(InputImage.fromFile(file));
+
+      // "Total" followed by up to a few non-digit chars (":", "₹", spaces, newline).
+      final matches = RegExp(
+        r'total\D{0,6}(\d+)',
+        caseSensitive: false,
+      ).allMatches(result.text);
+
+      if (matches.isEmpty) return null;
+
+      // The grand total is the last "Total" on the receipt.
+      return int.tryParse(matches.last.group(1)!);
+    } catch (e) {
+      debugPrint('OCR failed for ${file.path}: $e');
+      return null;
+    } finally {
+      recognizer.close();
+    }
+  }
+
+  /// Reads and saves totals for selected receipts that don't have one yet.
+  Future<void> _backfillMissingTotals(List<File> selected) async {
+    final missing =
+        selected
+            .where((f) => !_totals.containsKey(ReceiptTotals.nameOf(f)))
+            .toList();
+
+    if (missing.isEmpty) return;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (_) => PopScope(
+            canPop: false,
+            child: AlertDialog(
+              content: Row(
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Text(
+                      'Reading ${missing.length} older receipt(s)...',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+    );
+
+    for (final file in missing) {
+      final amount = await _readTotalFromImage(file);
+      if (amount != null) {
+        final name = ReceiptTotals.nameOf(file);
+        await ReceiptTotals.save(name, amount);
+        _totals[name] = amount;
+      }
+    }
+
+    if (mounted)
+      Navigator.of(context, rootNavigator: true).pop(); // close loader
   }
 
   void _sortReceipts() {
@@ -32,21 +110,16 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     );
   }
 
-  // Show only the time below each saved receipt image.
   String _formatReceiptTime(File file) {
     final date = file.lastModifiedSync();
-
     final hour12 = date.hour % 12 == 0 ? 12 : date.hour % 12;
     final period = date.hour >= 12 ? 'PM' : 'AM';
-
     String two(int n) => n.toString().padLeft(2, '0');
-
     return '${two(hour12)}:${two(date.minute)} $period';
   }
 
-  DateTime _dateOnly(DateTime date) {
-    return DateTime(date.year, date.month, date.day);
-  }
+  DateTime _dateOnly(DateTime date) =>
+      DateTime(date.year, date.month, date.day);
 
   String _sectionTitle(File file) {
     final today = _dateOnly(DateTime.now());
@@ -63,24 +136,157 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
 
   Map<String, List<File>> _groupReceipts() {
     final groups = <String, List<File>>{};
-
     for (final file in _receipts) {
-      final title = _sectionTitle(file);
-      groups.putIfAbsent(title, () => []).add(file);
+      groups.putIfAbsent(_sectionTitle(file), () => []).add(file);
     }
-
     return groups;
   }
 
+  // ---------- SELECTION ----------
+
   void _toggleSelection(File file) {
     setState(() {
-      if (_selectedPaths.contains(file.path)) {
-        _selectedPaths.remove(file.path);
-      } else {
+      if (!_selectedPaths.remove(file.path)) {
         _selectedPaths.add(file.path);
       }
     });
   }
+
+  bool _isSectionAllSelected(List<File> files) =>
+      files.isNotEmpty && files.every((f) => _selectedPaths.contains(f.path));
+
+  void _toggleSectionSelection(List<File> files) {
+    setState(() {
+      if (_isSectionAllSelected(files)) {
+        _selectedPaths.removeAll(files.map((f) => f.path));
+      } else {
+        _selectedPaths.addAll(files.map((f) => f.path));
+      }
+    });
+  }
+
+  bool get _isEverythingSelected =>
+      _receipts.isNotEmpty && _selectedPaths.length == _receipts.length;
+
+  void _toggleSelectEverything() {
+    setState(() {
+      if (_isEverythingSelected) {
+        _selectedPaths.clear();
+      } else {
+        _selectedPaths
+          ..clear()
+          ..addAll(_receipts.map((f) => f.path));
+      }
+    });
+  }
+
+  // ---------- CALCULATE ----------
+  Future<void> _showCalculation() async {
+    final selected =
+        _receipts.where((f) => _selectedPaths.contains(f.path)).toList();
+
+    await _backfillMissingTotals(selected);
+
+    if (!mounted) return;
+    _showCalculationDialog();
+  }
+
+  void _showCalculationDialog() {
+    final selected =
+        _receipts.where((f) => _selectedPaths.contains(f.path)).toList();
+
+    int total = 0;
+    int missing = 0;
+
+    final rows = <Widget>[];
+
+    for (final file in selected) {
+      final amount = _totals[ReceiptTotals.nameOf(file)];
+      if (amount == null) {
+        missing++;
+      } else {
+        total += amount;
+      }
+
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${_sectionTitle(file)}, ${_formatReceiptTime(file)}',
+                ),
+              ),
+              Text(
+                amount == null ? 'N/A' : '₹ $amount',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: Text(
+              'Selected total (${selected.length} '
+              '${selected.length == 1 ? 'receipt' : 'receipts'})',
+            ),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Flexible(child: ListView(shrinkWrap: true, children: rows)),
+                  const Divider(height: 20),
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Total',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '₹ $total',
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (missing > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        '$missing older ${missing == 1 ? 'receipt has' : 'receipts have'} '
+                        'no saved amount and ${missing == 1 ? 'was' : 'were'} not counted.',
+                        style: const TextStyle(fontSize: 12, color: Colors.red),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  // ---------- OPEN / SHARE / DELETE ----------
 
   void _openReceipt(File file, List<File> dayFiles) {
     final initialIndex = dayFiles.indexWhere((item) => item.path == file.path);
@@ -102,9 +308,7 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     final existingFiles = <File>[];
 
     for (final file in files) {
-      if (await file.exists()) {
-        existingFiles.add(file);
-      }
+      if (await file.exists()) existingFiles.add(file);
     }
 
     if (!mounted) return;
@@ -132,7 +336,6 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Unable to share receipts: $e')));
@@ -172,17 +375,19 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
 
     final pathsToDelete = Set<String>.from(_selectedPaths);
     final failedPaths = <String>[];
+    final deletedNames = <String>[];
 
     for (final path in pathsToDelete) {
       try {
         final file = File(path);
-        if (await file.exists()) {
-          await file.delete();
-        }
+        if (await file.exists()) await file.delete();
+        deletedNames.add(ReceiptTotals.nameOf(file));
       } catch (_) {
         failedPaths.add(path);
       }
     }
+
+    await ReceiptTotals.removeAll(deletedNames);
 
     if (!mounted) return;
 
@@ -192,6 +397,9 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
             pathsToDelete.contains(file.path) &&
             !failedPaths.contains(file.path),
       );
+      for (final n in deletedNames) {
+        _totals.remove(n);
+      }
       _selectedPaths.clear();
       _sortReceipts();
     });
@@ -207,6 +415,8 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
       ),
     );
   }
+
+  // ---------- UI ----------
 
   Widget _buildReceiptGrid(List<File> files) {
     return GridView.builder(
@@ -290,14 +500,37 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
   }
 
   Widget _buildDateSection(String title, List<File> files) {
+    final allSelected = _isSectionAllSelected(files);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
-          child: Text(
-            title,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          padding: const EdgeInsets.fromLTRB(12, 10, 4, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              // Per-section "Select all" appears only in selection mode.
+              if (_isSelecting)
+                TextButton.icon(
+                  onPressed: () => _toggleSectionSelection(files),
+                  icon: Icon(
+                    allSelected
+                        ? Icons.check_circle
+                        : Icons.radio_button_unchecked,
+                    size: 20,
+                  ),
+                  label: Text(allSelected ? 'Deselect all' : 'Select all'),
+                ),
+            ],
           ),
         ),
         _buildReceiptGrid(files),
@@ -330,9 +563,7 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
         leading:
             _isSelecting
                 ? IconButton(
-                  onPressed: () {
-                    setState(() => _selectedPaths.clear());
-                  },
+                  onPressed: () => setState(() => _selectedPaths.clear()),
                   icon: const Icon(Icons.close),
                 )
                 : null,
@@ -341,6 +572,17 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
               ? '${_selectedPaths.length} selected'
               : 'Saved Tokens (${_receipts.length})',
         ),
+        actions: [
+          if (_isSelecting)
+            IconButton(
+              tooltip:
+                  _isEverythingSelected ? 'Deselect all' : 'Select everything',
+              icon: Icon(
+                _isEverythingSelected ? Icons.deselect : Icons.select_all,
+              ),
+              onPressed: _toggleSelectEverything,
+            ),
+        ],
       ),
       body:
           _receipts.isEmpty
@@ -356,7 +598,7 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
           _isSelecting
               ? SafeArea(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
                   child: Row(
                     children: [
                       Expanded(
@@ -365,32 +607,46 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
                             final selectedFiles =
                                 _receipts
                                     .where(
-                                      (file) =>
-                                          _selectedPaths.contains(file.path),
+                                      (f) => _selectedPaths.contains(f.path),
                                     )
                                     .toList();
-
                             _shareFiles(selectedFiles);
                           },
-                          icon: const Icon(Icons.share),
+                          icon: const Icon(Icons.share, size: 18),
                           label: const Text('Share'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF25D366),
                             foregroundColor: Colors.white,
                             minimumSize: const Size(0, 48),
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _showCalculation,
+                          icon: const Icon(Icons.calculate, size: 18),
+                          label: const Text('Calculate'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(0, 48),
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: ElevatedButton.icon(
                           onPressed: _deleteSelected,
-                          icon: const Icon(Icons.delete),
+                          icon: const Icon(Icons.delete, size: 18),
                           label: const Text('Delete'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.red,
                             foregroundColor: Colors.white,
                             minimumSize: const Size(0, 48),
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
                           ),
                         ),
                       ),
@@ -521,5 +777,41 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
         ),
       ),
     );
+  }
+}
+
+/// Stores the total amount for each saved receipt (fileName -> total).
+class ReceiptTotals {
+  static const String _key = 'receipt_totals';
+
+  static String nameOf(File file) =>
+      file.path.split(Platform.pathSeparator).last;
+
+  static Future<Map<String, int>> loadAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_key);
+    if (raw == null) return {};
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      return decoded.map((k, v) => MapEntry(k, (v as num).toInt()));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static Future<void> save(String fileName, int total) async {
+    final prefs = await SharedPreferences.getInstance();
+    final all = await loadAll();
+    all[fileName] = total;
+    await prefs.setString(_key, jsonEncode(all));
+  }
+
+  static Future<void> removeAll(Iterable<String> fileNames) async {
+    final prefs = await SharedPreferences.getInstance();
+    final all = await loadAll();
+    for (final n in fileNames) {
+      all.remove(n);
+    }
+    await prefs.setString(_key, jsonEncode(all));
   }
 }
