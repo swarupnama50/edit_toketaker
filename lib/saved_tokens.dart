@@ -101,8 +101,9 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
       }
     }
 
-    if (mounted)
+    if (mounted) {
       Navigator.of(context, rootNavigator: true).pop(); // close loader
+    }
   }
 
   void _sortReceipts() {

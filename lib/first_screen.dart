@@ -2157,6 +2157,40 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         value == 'HP';
   }
 
+  // From SR, jump to the next blank box below.
+  // Priority inside a row: blank Num -> blank FR -> blank SR.
+  // Rows that are completely filled are skipped.
+  void _focusBelowFromSr(int rowIndex) {
+    final sortedIndexes = getSortedRowIndexes();
+    final position = sortedIndexes.indexOf(rowIndex);
+
+    if (position == -1) return;
+
+    for (int i = position + 1; i < sortedIndexes.length; i++) {
+      final index = sortedIndexes[i];
+
+      // 1st priority: Num box is blank or not a complete number yet.
+      if (!isFirstFilled(index)) {
+        FocusScope.of(context).requestFocus(numFocusNodes[index]);
+        return;
+      }
+
+      // 2nd priority: FR box is blank.
+      if (frControllers[index].text.trim().isEmpty) {
+        FocusScope.of(context).requestFocus(frFocusNodes[index]);
+        return;
+      }
+
+      // 3rd priority: SR box is blank.
+      if (srControllers[index].text.trim().isEmpty) {
+        FocusScope.of(context).requestFocus(srFocusNodes[index]);
+        return;
+      }
+
+      // Row is completely filled, check the next row.
+    }
+  }
+
   void moveToNextField(int rowIndex, String currentField) {
     if (currentField == 'num') {
       if (isTRMode) {
@@ -2171,6 +2205,18 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       FocusScope.of(context).requestFocus(srFocusNodes[rowIndex]);
       return;
     }
+    if (currentField == 'fr') {
+      FocusScope.of(context).requestFocus(srFocusNodes[rowIndex]);
+      return;
+    }
+
+    // NEW: in FR/SR mode, SR jumps to the row below (FR if empty, else SR).
+    if (!isTRMode && currentField == 'sr') {
+      _focusBelowFromSr(rowIndex);
+      return;
+    }
+
+    // After SR/TR, move to the next visible row's Num field.
 
     // After SR/TR, move to the next visible row's Num field.
     final sortedIndexes = getSortedRowIndexes();
@@ -2203,6 +2249,11 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   }
 
   void moveToNextAmount(int rowIndex, String fieldType) {
+    // NEW: in FR/SR mode, SR jumps to the row below (FR if empty, else SR).
+    if (!isTRMode && fieldType == 'sr') {
+      _focusBelowFromSr(rowIndex);
+      return;
+    }
     final sortedIndexes = getSortedRowIndexes();
     final position = sortedIndexes.indexOf(rowIndex);
 
