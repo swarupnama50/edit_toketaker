@@ -6,6 +6,7 @@ import 'package:photo_view/photo_view_gallery.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:flutter/services.dart';
 
 class SavedReceiptsScreen extends StatefulWidget {
   final List<File> receipts;
@@ -321,14 +322,14 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     }
 
     try {
-      await SharePlus.instance.share(
-        ShareParams(
-          files:
-              existingFiles
-                  .map((file) => XFile(file.path, mimeType: 'image/jpeg'))
-                  .toList(),
-          sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
-        ),
+      await ShareHelper.shareFiles(
+        existingFiles,
+        onNotice: (msg) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(msg)));
+        },
       );
 
       if (mounted && _isSelecting) {
@@ -813,5 +814,61 @@ class ReceiptTotals {
       all.remove(n);
     }
     await prefs.setString(_key, jsonEncode(all));
+  }
+}
+
+class ShareHelper {
+  static const MethodChannel _channel = MethodChannel('token_taker/whatsapp');
+  static const String modeKey = 'share_mode';
+  static const String numberKey = 'share_whatsapp_number';
+
+  /// Digits only. A 10-digit number gets the India code (91).
+  static String cleanNumber(String raw) {
+    var digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.startsWith('00')) digits = digits.substring(2);
+    if (digits.length == 10) digits = '91$digits';
+    return digits;
+  }
+
+  static Future<void> _normalShare(List<File> files) {
+    return SharePlus.instance.share(
+      ShareParams(
+        files: files.map((f) => XFile(f.path, mimeType: 'image/jpeg')).toList(),
+        sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
+      ),
+    );
+  }
+
+  static Future<void> shareFiles(
+    List<File> files, {
+    void Function(String message)? onNotice,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final mode = prefs.getInt(modeKey) ?? 2;
+    final number = cleanNumber(prefs.getString(numberKey) ?? '');
+
+    if (mode == 0 || mode == 1) {
+      if (mode == 0 && number.isEmpty) {
+        onNotice?.call('No WhatsApp number saved. Add one in Settings.');
+        await _normalShare(files);
+        return;
+      }
+
+      try {
+        final ok = await _channel.invokeMethod<bool>('share', {
+          'paths': files.map((f) => f.path).toList(),
+          'phone': mode == 0 ? number : '',
+        });
+
+        if (ok == true) return;
+
+        onNotice?.call('WhatsApp is not installed. Using normal share.');
+      } catch (e) {
+        debugPrint('WhatsApp share failed: $e');
+        onNotice?.call('Could not open WhatsApp. Using normal share.');
+      }
+    }
+
+    await _normalShare(files);
   }
 }

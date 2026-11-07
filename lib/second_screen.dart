@@ -9,7 +9,6 @@ import 'package:flutter/rendering.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:token_taker/saved_tokens.dart';
-import 'package:share_plus/share_plus.dart';
 
 class SecondScreen extends StatefulWidget {
   final List<Map<String, String>> data;
@@ -46,6 +45,18 @@ class _SecondScreenState extends State<SecondScreen> {
   }
 
   static const String _saveToDeviceGalleryKey = 'save_to_device_gallery';
+  static const String _saveDestinationKey = 'save_destination';
+
+  // 0 = app only, 1 = device gallery only, 2 = both
+  Future<int> _loadSaveDestination() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getInt(_saveDestinationKey);
+    if (saved != null && saved >= 0 && saved <= 2) return saved;
+
+    // Older versions stored a true/false switch.
+    final legacy = prefs.getBool(_saveToDeviceGalleryKey) ?? true;
+    return legacy ? 2 : 0;
+  }
 
   late Timer timer;
   DateTime currentTime = DateTime.now();
@@ -158,14 +169,9 @@ class _SecondScreenState extends State<SecondScreen> {
             (_) => ReceiptViewerScreen(
               files: files,
               initialIndex: initialIndex,
-              onShare: (file) async {
-                await SharePlus.instance.share(
-                  ShareParams(
-                    files: [XFile(file.path, mimeType: 'image/jpeg')],
-                    sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
-                  ),
-                );
-              },
+              onShare:
+                  (file) =>
+                      ShareHelper.shareFiles([file], onNotice: _showMessage),
             ),
       ),
     );
@@ -537,7 +543,6 @@ class _SecondScreenState extends State<SecondScreen> {
   }
 
   // SAVE RECEIPT AS JPG
-
   Future<void> _handlePrintTap() async {
     if (_isBusy) return;
 
@@ -574,7 +579,6 @@ class _SecondScreenState extends State<SecondScreen> {
         return;
       }
 
-      // The background is already part of the captured receipt.
       final jpgBytes = Uint8List.fromList(
         img.encodeJpg(decodedImage, quality: 95),
       );
@@ -590,48 +594,68 @@ class _SecondScreenState extends State<SecondScreen> {
           '${two(now.day)}-${two(now.month)}-${two(now.year % 100)}_'
           '${two(hour12)}-${two(now.minute)}-${two(now.second)}_$period.jpg';
 
-      final file = File('${directory.path}/$fileName');
+      final destination = await _loadSaveDestination();
+      final saveToApp = destination != 1;
+      final saveToGallery = destination != 0;
+
+      // Gallery-only images go to a temporary folder, so they never
+      // appear in the app's Saved Tokens screen.
+      final targetDir = saveToApp ? directory : await getTemporaryDirectory();
+      final file = File('${targetDir.path}/$fileName');
 
       await file.writeAsBytes(jpgBytes, flush: true);
-      _showMessage(
-        'Image saved successfully.',
-        onView: () => _viewSavedReceipt(file),
-      );
-      await _loadTodayReceiptCount();
-      await _loadSavedReceipts();
 
-      final prefs = await SharedPreferences.getInstance();
-      final saveToDeviceGallery =
-          prefs.getBool(_saveToDeviceGalleryKey) ?? true;
+      Future<void> deleteTempIfNeeded() async {
+        if (saveToApp) return;
+        try {
+          if (await file.exists()) await file.delete();
+        } catch (_) {}
+      }
 
-      if (!saveToDeviceGallery) {
+      if (saveToApp) {
+        await ReceiptTotals.save(fileName, getTotalAmount());
+        await _loadTodayReceiptCount();
+        await _loadSavedReceipts();
+      }
+
+      // ---- App only ----
+      if (!saveToGallery) {
         _showMessage(
-          'Image saved in the app gallery.',
+          'Image saved in the app.',
           onView: () => _viewSavedReceipt(file),
         );
         return;
       }
 
+      // ---- Gallery (only, or both) ----
       bool hasAccess = await Gal.hasAccess();
+      if (!hasAccess) hasAccess = await Gal.requestAccess();
 
       if (!hasAccess) {
-        hasAccess = await Gal.requestAccess();
-      }
+        await deleteTempIfNeeded();
 
-      if (!hasAccess) {
-        _showMessage(
-          'Image saved in the app, but Gallery permission was denied.',
-          onView: () => _viewSavedReceipt(file),
-        );
+        if (saveToApp) {
+          _showMessage(
+            'Image saved in the app, but Gallery permission was denied.',
+            onView: () => _viewSavedReceipt(file),
+          );
+        } else {
+          _showMessage('Gallery permission was denied. Image was not saved.');
+        }
         return;
       }
 
       await Gal.putImage(file.path);
+      await deleteTempIfNeeded();
 
-      _showMessage(
-        'Image saved successfully.',
-        onView: () => _viewSavedReceipt(file),
-      );
+      if (saveToApp) {
+        _showMessage(
+          'Image saved in the app and device Gallery.',
+          onView: () => _viewSavedReceipt(file),
+        );
+      } else {
+        _showMessage('Image saved in the device Gallery.');
+      }
     } catch (e) {
       _showMessage('Could not save Image: $e');
     } finally {

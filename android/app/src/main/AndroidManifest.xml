@@ -17,6 +17,10 @@
         <intent>
             <action android:name="android.speech.RecognitionService"/>
         </intent>
+
+        <!-- WhatsApp and WhatsApp Business (for sharing) -->
+        <package android:name="com.whatsapp"/>
+        <package android:name="com.whatsapp.w4b"/>
     </queries>
 
     <application
@@ -41,6 +45,16 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+                <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.tokentaker.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <meta-data
             android:name="flutterEmbedding"

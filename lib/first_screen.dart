@@ -111,7 +111,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     }
   }
 
-  bool _saveToDeviceGallery = true;
+  // 0 = app only, 1 = device gallery only, 2 = both
+  int _saveDestination = 2;
+  static const String _saveDestinationKey = 'save_destination';
 
   bool _restoringWorkingState = false;
 
@@ -588,7 +590,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   Future<void> showSettingsDialog() async {
     final prefs = await SharedPreferences.getInstance();
-    final savedValue = prefs.getBool(_saveToDeviceGalleryKey) ?? true;
 
     bool autoTrEnabled = prefs.getBool(_autoTrEnabledKey) ?? false;
     TimeOfDay autoTrTime = TimeOfDay(
@@ -596,17 +597,137 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       minute: prefs.getInt(_autoTrMinuteKey) ?? 0,
     );
 
+    // Use the saved choice; older versions stored a true/false switch.
+    final savedDestination =
+        prefs.getInt(_saveDestinationKey) ??
+        ((prefs.getBool(_saveToDeviceGalleryKey) ?? true) ? 2 : 0);
+
     if (!mounted) return;
 
     setState(() {
-      _saveToDeviceGallery = savedValue;
+      _saveDestination = savedDestination;
     });
+
+    int shareMode = prefs.getInt(ShareHelper.modeKey) ?? 2;
+
+    // Keep only the last 10 digits (older saves may include 91).
+    String initialNumber = (prefs.getString(ShareHelper.numberKey) ?? '')
+        .replaceAll(RegExp(r'\D'), '');
+    if (initialNumber.length > 10) {
+      initialNumber = initialNumber.substring(initialNumber.length - 10);
+    }
+
+    final shareNumberController = TextEditingController(text: initialNumber);
+    String savedNumber = initialNumber;
+    final settingsScroll = ScrollController();
+
+    bool saveOpen = false;
+    bool shareOpen = false;
+
+    const saveOptions = [
+      (0, 'App only', 'Only in the Saved Tokens screen'),
+      (1, 'Device Gallery only', 'Only in your phone gallery'),
+      (2, 'App and Device Gallery', 'Save in both places'),
+    ];
+
+    const shareOptions = [
+      (0, 'Send to a WhatsApp number', 'Opens that chat, ready to send'),
+      (1, 'Open WhatsApp', 'Choose the person inside WhatsApp'),
+      (2, 'Normal share', 'Choose any app'),
+    ];
 
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            // Closed dropdown header showing the current choice.
+            Widget dropdownHeader({
+              required String title,
+              required String current,
+              required bool open,
+              required VoidCallback onTap,
+            }) {
+              return InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: onTap,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: open ? _primaryColor : _borderColor,
+                      width: open ? 1.5 : 1,
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF687282),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              current,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        open ? Icons.arrow_drop_up : Icons.arrow_drop_down,
+                        color: _primaryColor,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            // One option row inside an open dropdown.
+            Widget optionTile({
+              required String title,
+              required String subtitle,
+              required bool selected,
+              required VoidCallback onTap,
+            }) {
+              return ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                dense: true,
+                title: Text(title),
+                subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+                trailing: Icon(
+                  selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: selected ? _primaryColor : Colors.grey,
+                ),
+                onTap: onTap,
+              );
+            }
+
+            final saveCurrent =
+                saveOptions.firstWhere((o) => o.$1 == _saveDestination).$2;
+            final shareCurrent =
+                shareOptions.firstWhere((o) => o.$1 == shareMode).$2;
+
+            final numberComplete = shareNumberController.text.length == 10;
+            final numberSaved =
+                numberComplete && shareNumberController.text == savedNumber;
+
             return AlertDialog(
               title: const Row(
                 children: [
@@ -616,33 +737,164 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                 ],
               ),
               content: SingleChildScrollView(
+                controller: settingsScroll,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text(
-                        'Save to device Gallery',
-                        style: TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      subtitle: const Text(
-                        'Show newly downloaded images in your device gallery',
-                      ),
-                      value: _saveToDeviceGallery,
-                      activeTrackColor: _primaryColor,
-                      onChanged: (value) async {
-                        setDialogState(() {
-                          _saveToDeviceGallery = value;
-                        });
-
-                        setState(() {
-                          _saveToDeviceGallery = value;
-                        });
-
-                        await prefs.setBool(_saveToDeviceGalleryKey, value);
-                      },
+                    // ---------- SAVE IMAGE TO ----------
+                    dropdownHeader(
+                      title: 'Save image to',
+                      current: saveCurrent,
+                      open: saveOpen,
+                      onTap:
+                          () => setDialogState(() {
+                            saveOpen = !saveOpen;
+                            shareOpen = false;
+                          }),
                     ),
-                    const Divider(),
+                    if (saveOpen)
+                      Container(
+                        margin: const EdgeInsets.only(top: 4),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: _borderColor),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Column(
+                          children: [
+                            for (final option in saveOptions)
+                              optionTile(
+                                title: option.$2,
+                                subtitle: option.$3,
+                                selected: _saveDestination == option.$1,
+                                onTap: () async {
+                                  setDialogState(() {
+                                    _saveDestination = option.$1;
+                                    saveOpen = false;
+                                  });
+                                  setState(() => _saveDestination = option.$1);
+                                  await prefs.setInt(
+                                    _saveDestinationKey,
+                                    option.$1,
+                                  );
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+
+                    const SizedBox(height: 14),
+
+                    // ---------- WHEN SHARE IS TAPPED ----------
+                    dropdownHeader(
+                      title: 'When Share is tapped',
+                      current: shareCurrent,
+                      open: shareOpen,
+                      onTap:
+                          () => setDialogState(() {
+                            shareOpen = !shareOpen;
+                            saveOpen = false;
+                          }),
+                    ),
+                    if (shareOpen)
+                      Container(
+                        margin: const EdgeInsets.only(top: 4),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: _borderColor),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Column(
+                          children: [
+                            for (final option in shareOptions) ...[
+                              optionTile(
+                                title: option.$2,
+                                subtitle: option.$3,
+                                selected: shareMode == option.$1,
+                                onTap: () async {
+                                  setDialogState(() {
+                                    shareMode = option.$1;
+                                    // Keep the list open for option 0 so the
+                                    // number can be typed right below it.
+                                    if (option.$1 != 0) shareOpen = false;
+                                  });
+                                  await prefs.setInt(
+                                    ShareHelper.modeKey,
+                                    option.$1,
+                                  );
+                                },
+                              ),
+
+                              // WhatsApp number box + Save button,
+                              // right below "Send to a WhatsApp number".
+                              if (option.$1 == 0 && shareMode == 0)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    8,
+                                    0,
+                                    8,
+                                    8,
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        child: TextField(
+                                          controller: shareNumberController,
+                                          keyboardType: TextInputType.phone,
+                                          inputFormatters: [
+                                            FilteringTextInputFormatter
+                                                .digitsOnly,
+                                            LengthLimitingTextInputFormatter(
+                                              10,
+                                            ),
+                                          ],
+                                          decoration: const InputDecoration(
+                                            labelText: 'WhatsApp number',
+                                            hintText: '9876543210',
+                                            prefixText: '+91 ',
+                                            helperText: '10 digits only',
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                          onChanged:
+                                              (_) => setDialogState(() {}),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: ElevatedButton(
+                                          onPressed:
+                                              (numberComplete && !numberSaved)
+                                                  ? () async {
+                                                    final value =
+                                                        shareNumberController
+                                                            .text;
+                                                    await prefs.setString(
+                                                      ShareHelper.numberKey,
+                                                      value,
+                                                    );
+                                                    setDialogState(
+                                                      () => savedNumber = value,
+                                                    );
+                                                  }
+                                                  : null,
+                                          child: Text(
+                                            numberSaved ? 'Saved' : 'Save',
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ],
+                        ),
+                      ),
+
+                    const Divider(height: 28),
+
+                    // ---------- AUTO TR MODE ----------
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text(
@@ -659,6 +911,19 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                         setDialogState(() {
                           autoTrEnabled = value;
                         });
+
+                        // Scroll down so the time option is visible.
+                        if (value) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (settingsScroll.hasClients) {
+                              settingsScroll.animateTo(
+                                settingsScroll.position.maxScrollExtent,
+                                duration: const Duration(milliseconds: 250),
+                                curve: Curves.easeOut,
+                              );
+                            }
+                          });
+                        }
 
                         await prefs.setBool(_autoTrEnabledKey, value);
 
@@ -693,9 +958,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                             context: dialogContext,
                             initialTime: autoTrTime,
                             helpText: 'TR mode start time (before 7:00 PM)',
-                            initialEntryMode:
-                                TimePickerEntryMode
-                                    .input, // text input mode by default
+                            initialEntryMode: TimePickerEntryMode.input,
                             builder: (context, child) {
                               return Theme(
                                 data: Theme.of(context).copyWith(
@@ -712,7 +975,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                                                   ? _primaryColor
                                                   : Colors.transparent,
                                         ),
-                                    // Selected AM/PM text is white, the other one is gray.
+                                    // Selected AM/PM text is white, the other is gray.
                                     dayPeriodTextColor:
                                         WidgetStateColor.resolveWith(
                                           (states) =>
@@ -769,6 +1032,12 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         );
       },
     );
+
+    // Dispose after the dialog's closing animation has finished.
+    Future.delayed(const Duration(milliseconds: 400), () {
+      shareNumberController.dispose();
+      settingsScroll.dispose();
+    });
   }
 
   void showAboutDialog() {
