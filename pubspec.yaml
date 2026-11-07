@@ -18,6 +18,10 @@ dependencies:
   shared_preferences: ^2.5.3
   share_plus: ^12.0.2
   photo_view: ^0.15.0
+  http: ^1.6.0
+  package_info_plus: ^9.0.1
+  open_filex: ^5.0.0
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:
@@ -28,6 +32,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/my_qr.png
 
 flutter_launcher_icons:
   android: true

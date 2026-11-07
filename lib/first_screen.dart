@@ -7,6 +7,8 @@ import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:token_taker/app_updater.dart';
+import 'package:token_taker/payment_dialog.dart';
 
 class FirstScreen extends StatefulWidget {
   const FirstScreen({super.key});
@@ -515,6 +517,16 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
           ),
         ),
         PopupMenuItem(
+          value: 'payment',
+          child: Row(
+            children: [
+              Icon(Icons.payment_outlined),
+              SizedBox(width: 12),
+              Text('Payment'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
           value: 'settings',
           child: Row(
             children: [
@@ -557,6 +569,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
           break;
         case 'copy':
           _copyTokenData();
+          break;
+        case 'payment':
+          PaymentDialog.show(context);
           break;
         case 'settings':
           showSettingsDialog();
@@ -1764,6 +1779,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       const Duration(seconds: 20),
       (_) => _checkAutoTrSchedule(),
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      AppUpdater.checkForUpdate(context);
+    });
   }
 
   Future<void> _loadMode() async {
@@ -2939,14 +2958,14 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                 Expanded(
                   child: Center(
                     child: Text(
-  'Num(${numControllers.where((c) => c.text.trim().isNotEmpty).length})',
-  style: const TextStyle(
-    fontSize: 12,
-    fontWeight: FontWeight.w700,
-    letterSpacing: 1,
-    color: Color(0xFF687282),
-  ),
-),
+                      'Num(${numControllers.where((c) => c.text.trim().isNotEmpty).length})',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1,
+                        color: Color(0xFF687282),
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 3),
