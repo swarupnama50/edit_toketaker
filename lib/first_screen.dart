@@ -849,8 +849,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                                             ),
                                           ],
                                           decoration: const InputDecoration(
-                                            labelText: 'WhatsApp number',
-                                            hintText: '9876543210',
+                                            labelText: 'Enter WhatsApp No.',
+
                                             prefixText: '+91 ',
                                             helperText: '10 digits only',
                                             border: OutlineInputBorder(),
