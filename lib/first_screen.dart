@@ -580,10 +580,13 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
       switch (value) {
         case 'google':
-          CloudSync.handleMenuTap(context).then((changed) {
-            if (changed) _reloadAfterSync();
-            _fillAccountName();
-          });
+          {
+            final wasLoggedIn = CloudSync.isLoggedIn;
+            CloudSync.handleMenuTap(context).then((changed) {
+              if (changed) _reloadAfterSync();
+              if (!wasLoggedIn && CloudSync.isLoggedIn) _fillAccountName();
+            });
+          }
           break;
         case 'drafts':
           _showDrafts();
@@ -1851,7 +1854,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     if (mounted) setState(() {});
     _scheduleWorkingSave();
-    _fillAccountName();
+
     _scheduleWorkingSave();
   }
 
@@ -2181,7 +2184,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     await _restoreWorkingState(savedMode);
     await _checkAutoTrSchedule();
     await _checkAutoTrSchedule();
-    _fillAccountName();
 
     CloudSync.syncIfLoggedIn().then((changed) {
       if (changed) _reloadAfterSync();
@@ -2745,7 +2747,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       amountRevision.value++;
     });
     _resetHistory();
-    _fillAccountName();
 
     // Save the fresh state so reopening the app keeps it blank.
     await _saveWorkingState();

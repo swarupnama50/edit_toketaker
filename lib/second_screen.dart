@@ -209,6 +209,13 @@ class _SecondScreenState extends State<SecondScreen> {
   }
 
   bool _isBusy = false;
+
+  bool _alreadySaved = false;
+
+  void _markSaved() {
+    if (mounted) setState(() => _alreadySaved = true);
+  }
+
   bool _isHEGroup(String numText) {
     return (numText.length == 2 &&
             int.tryParse(numText[0]) != null &&
@@ -544,7 +551,7 @@ class _SecondScreenState extends State<SecondScreen> {
 
   // SAVE RECEIPT AS JPG
   Future<void> _handlePrintTap() async {
-    if (_isBusy) return;
+    if (_isBusy || _alreadySaved) return;
 
     setState(() => _isBusy = true);
 
@@ -616,6 +623,7 @@ class _SecondScreenState extends State<SecondScreen> {
         await ReceiptTotals.save(fileName, getTotalAmount());
         await _loadTodayReceiptCount();
         await _loadSavedReceipts();
+        _markSaved();
       }
 
       // ---- App only ----
@@ -646,6 +654,7 @@ class _SecondScreenState extends State<SecondScreen> {
       }
 
       await Gal.putImage(file.path);
+      _markSaved();
       await deleteTempIfNeeded();
 
       if (saveToApp) {
@@ -888,7 +897,7 @@ class _SecondScreenState extends State<SecondScreen> {
               const Spacer(),
 
               ElevatedButton.icon(
-                onPressed: _isBusy ? null : _handlePrintTap,
+                onPressed: (_isBusy || _alreadySaved) ? null : _handlePrintTap,
                 icon:
                     _isBusy
                         ? const SizedBox(
@@ -896,8 +905,10 @@ class _SecondScreenState extends State<SecondScreen> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                        : const Icon(Icons.save_alt),
-                label: Text(_isBusy ? 'Saving...' : 'Save'),
+                        : Icon(_alreadySaved ? Icons.check : Icons.save_alt),
+                label: Text(
+                  _isBusy ? 'Saving...' : (_alreadySaved ? 'Saved' : 'Save'),
+                ),
               ),
             ],
           ),

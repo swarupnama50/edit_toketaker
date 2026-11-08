@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:token_taker/saved_tokens.dart' show ShareHelper;
@@ -17,10 +18,15 @@ import 'package:token_taker/saved_tokens.dart' show ShareHelper;
 /// - Logged in      -> everything stays on the device AND is copied to the
 ///                     server. Logging in on a new/old device restores
 ///                     settings, drafts and receipt images from the server.
-/// - Auto sync ON   -> syncs by itself. OFF -> user taps "Sync now".
+/// - Auto sync ON   -> syncs by itself. OFF (default) -> user taps "Sync now"
+///                     in Settings. Login always syncs once.
+///
+/// Login uses the native Google account chooser inside the app
+/// (no browser).
 ///
 /// Server layout (all in Firestore, folder name = Google email):
 ///   users/{email}/meta/settings
+///   users/{email}/meta/profile                   (name, email, photo, phone)
 ///   users/{email}/drafts/{draftId}
 ///   users/{email}/receipts/{file}.jpg            (+ /parts/0000, 0001 ...)
 class CloudSync {
@@ -46,7 +52,7 @@ class CloudSync {
   static bool _available = false;
   static bool _syncing = false;
   static bool _pending = false;
-  static bool _autoSync = true;
+  static bool _autoSync = false; // default OFF
   static Timer? _debounce;
 
   /// Call once in main() after WidgetsFlutterBinding.ensureInitialized().
@@ -54,7 +60,7 @@ class CloudSync {
   static Future<void> init() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      _autoSync = prefs.getBool(_autoSyncKey) ?? true;
+      _autoSync = prefs.getBool(_autoSyncKey) ?? false;
     } catch (_) {}
 
     try {
@@ -72,6 +78,22 @@ class CloudSync {
 
   /// Google account name, or '' when not logged in.
   static String get displayName => user?.displayName ?? '';
+
+  /// Phone number from the Google account, or '' if Google didn't give one
+  /// (it usually doesn't).
+  static String get phoneNumber {
+    final u = user;
+    if (u == null) return '';
+
+    final direct = u.phoneNumber;
+    if (direct != null && direct.isNotEmpty) return direct;
+
+    for (final p in u.providerData) {
+      final n = p.phoneNumber;
+      if (n != null && n.isNotEmpty) return n;
+    }
+    return '';
+  }
 
   // Server folder name = the user's Google email (lowercase).
   static String get _userKey => (user!.email ?? user!.uid).toLowerCase();
@@ -106,6 +128,13 @@ class CloudSync {
           .collection('meta')
           .doc('settings');
 
+  static DocumentReference<Map<String, dynamic>> get _profileDoc =>
+      FirebaseFirestore.instance
+          .collection('users')
+          .doc(_userKey)
+          .collection('meta')
+          .doc('profile');
+
   static CollectionReference<Map<String, dynamic>> get _draftsCol =>
       FirebaseFirestore.instance
           .collection('users')
@@ -125,11 +154,21 @@ class CloudSync {
   // LOGIN / LOGOUT
   // ---------------------------------------------------------------------
 
+  /// Opens the native Google account chooser (no browser).
   /// Returns true if the user signed in.
   static Future<bool> signIn() async {
     if (!_available) return false;
     try {
-      await FirebaseAuth.instance.signInWithProvider(GoogleAuthProvider());
+      final googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) return false; // user cancelled
+
+      final googleAuth = await googleUser.authentication;
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      await FirebaseAuth.instance.signInWithCredential(credential);
       return isLoggedIn;
     } catch (e) {
       debugPrint('Google sign-in failed or cancelled: $e');
@@ -140,6 +179,9 @@ class CloudSync {
   /// Logs out. Data already on the device stays on the device.
   static Future<void> signOut() async {
     _debounce?.cancel();
+    try {
+      await GoogleSignIn().signOut(); // so the account chooser shows again
+    } catch (_) {}
     if (_available) await FirebaseAuth.instance.signOut();
   }
 
@@ -181,6 +223,13 @@ class CloudSync {
       } catch (e) {
         allOk = false;
         debugPrint('SYNC settings failed: $e');
+      }
+
+      try {
+        await _syncProfile(prefs);
+      } catch (e) {
+        allOk = false;
+        debugPrint('SYNC profile failed: $e');
       }
 
       try {
@@ -258,6 +307,36 @@ class CloudSync {
     }
     out['updatedAt'] = DateTime.now().millisecondsSinceEpoch;
     await _settingsDoc.set(out, SetOptions(merge: true));
+  }
+
+  // ---------------------------------------------------------------------
+  // GOOGLE PROFILE
+  // ---------------------------------------------------------------------
+
+  static Future<void> _syncProfile(SharedPreferences prefs) async {
+    final u = user!;
+    final phone = phoneNumber;
+
+    await _profileDoc.set({
+      'name': u.displayName ?? '',
+      'email': u.email ?? '',
+      'photoUrl': u.photoURL ?? '',
+      if (phone.isNotEmpty) 'phone': phone,
+      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+    }, SetOptions(merge: true));
+
+    // If Google gave a phone number, use it for the WhatsApp number setting,
+    // but only when that setting is still empty.
+    if (phone.isNotEmpty) {
+      final digits = phone.replaceAll(RegExp(r'\D'), '');
+      final last10 =
+          digits.length > 10 ? digits.substring(digits.length - 10) : digits;
+      final current = (prefs.getString(ShareHelper.numberKey) ?? '').trim();
+
+      if (current.isEmpty && last10.length == 10) {
+        await prefs.setString(ShareHelper.numberKey, last10);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -475,7 +554,8 @@ class CloudSync {
     }
 
     if (isLoggedIn) {
-      return _showAccountDialog(context);
+      await _showAccountDialog(context);
+      return false;
     }
 
     return _loginAndSync(context);
@@ -521,94 +601,95 @@ class CloudSync {
     return synced;
   }
 
-  static Future<bool> _showAccountDialog(BuildContext context) async {
-    bool changed = false;
+  static Future<void> _showAccountDialog(BuildContext context) async {
     final rootContext = context; // still valid after the dialog closes
+
+    final photo = user?.photoURL ?? '';
+    final name = user?.displayName ?? 'Google account';
+    final email = user?.email ?? '';
+    final phone = phoneNumber;
+    final hasPhoto = photo.isNotEmpty;
 
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) {
-        bool busy = false;
-
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Row(
-                children: [
-                  Icon(Icons.account_circle_outlined),
-                  SizedBox(width: 8),
-                  Text('Account'),
-                ],
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(user?.displayName ?? 'Google account'),
-                  const SizedBox(height: 2),
-                  Text(
-                    user?.email ?? '',
-                    style: const TextStyle(color: Colors.grey),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Your settings, drafts and saved images are backed up '
-                    'to the server.',
-                    style: TextStyle(fontSize: 13),
-                  ),
-                  if (busy) ...[
-                    const SizedBox(height: 14),
-                    const LinearProgressIndicator(),
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.account_circle_outlined),
+                SizedBox(width: 8),
+                Text('Account'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 24,
+                      backgroundImage: hasPhoto ? NetworkImage(photo) : null,
+                      onBackgroundImageError: hasPhoto ? (_, __) {} : null,
+                      child:
+                          hasPhoto
+                              ? null
+                              : Text(
+                                name.isNotEmpty ? name[0].toUpperCase() : 'G',
+                              ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                            ),
+                          ),
+                          Text(
+                            email,
+                            style: const TextStyle(color: Colors.grey),
+                          ),
+                          if (phone.isNotEmpty)
+                            Text(
+                              phone,
+                              style: const TextStyle(color: Colors.grey),
+                            ),
+                        ],
+                      ),
+                    ),
                   ],
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed:
-                      busy
-                          ? null
-                          : () async {
-                            setDialogState(() => busy = true);
-                            final ok = await syncAll();
-                            changed = changed || ok;
-                            if (dialogContext.mounted) {
-                              setDialogState(() => busy = false);
-                              _toast(
-                                dialogContext,
-                                ok ? 'Synced' : 'Sync failed. Check internet.',
-                              );
-                            }
-                          },
-                  child: const Text('Sync now'),
                 ),
-                TextButton(
-                  onPressed:
-                      busy
-                          ? null
-                          : () async {
-                            await signOut();
-                            if (dialogContext.mounted) {
-                              Navigator.pop(dialogContext);
-                            }
-                            if (rootContext.mounted) {
-                              _toast(rootContext, 'Logged out');
-                            }
-                          },
-                  style: TextButton.styleFrom(foregroundColor: Colors.red),
-                  child: const Text('Log out'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Close'),
+                const SizedBox(height: 14),
+                const Text(
+                  'Your settings, drafts and saved images are backed up to '
+                  'the server when you sync. Use Settings to turn on Auto '
+                  'sync or to sync manually.',
+                  style: TextStyle(fontSize: 13),
                 ),
               ],
-            );
-          },
-        );
-      },
+            ),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  await signOut();
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  if (rootContext.mounted) _toast(rootContext, 'Logged out');
+                },
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: const Text('Log out'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
     );
-
-    return changed;
   }
 
   static void _toast(BuildContext context, String message) {
