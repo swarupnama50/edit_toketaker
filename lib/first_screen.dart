@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:token_taker/app_updater.dart';
 import 'package:token_taker/payment_dialog.dart';
 import 'package:token_taker/cloud_sync.dart';
+import 'package:token_taker/token_scanner.dart';
 
 class FirstScreen extends StatefulWidget {
   const FirstScreen({super.key});
@@ -918,6 +919,34 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                           ],
                         ),
                       ),
+
+                    // ---------- TOKEN SCANNER ----------
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(
+                        Icons.document_scanner_outlined,
+                        color: _primaryColor,
+                      ),
+                      title: const Text(
+                        'Token Scanner',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: const Text(
+                        'Scan or upload a token image and calculate totals.',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.pop(dialogContext);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => TokenScannerScreen(
+                              isTRMode: isTRMode,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
 
                     const Divider(height: 28),
 
