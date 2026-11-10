@@ -3362,7 +3362,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                       // Gallery
                       Expanded(
                         child: IconButton(
-                          tooltip: 'Saved tokens',
+                          tooltip: 'Tokens',
                           onPressed: _openSavedReceipts,
                           icon: Stack(
                             clipBehavior: Clip.none,

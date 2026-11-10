@@ -1,11 +1,58 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
+
+/// Folders for saved and trashed receipts.
+class ReceiptStorage {
+  static Future<Directory> _folder(String name) async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final dir = Directory('${appDir.path}/$name');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir;
+  }
+
+  static Future<Directory> receiptsDir() => _folder('saved_receipts');
+  static Future<Directory> trashDir() => _folder('trash_receipts');
+
+  static Future<List<File>> listJpgs(Directory dir) async {
+    if (!await dir.exists()) return [];
+    return dir
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.toLowerCase().endsWith('.jpg'))
+        .toList();
+  }
+
+  /// Moves a file and keeps its original date and time.
+  static Future<void> move(File file, Directory target) async {
+    final newPath = '${target.path}/${ReceiptTotals.nameOf(file)}';
+    try {
+      await file.rename(newPath);
+    } on FileSystemException {
+      final modified = await file.lastModified();
+      final copy = await file.copy(newPath);
+      await copy.setLastModified(modified);
+      await file.delete();
+    }
+  }
+
+  static Future<void> moveToTrash(File file) async =>
+      move(file, await trashDir());
+
+  static Future<void> restore(File file) async =>
+      move(file, await receiptsDir());
+
+  static Future<void> deleteForever(File file) async {
+    if (await file.exists()) await file.delete();
+    await ReceiptTotals.removeAll([ReceiptTotals.nameOf(file)]);
+  }
+}
 
 class SavedReceiptsScreen extends StatefulWidget {
   final List<File> receipts;
@@ -18,17 +65,25 @@ class SavedReceiptsScreen extends StatefulWidget {
 
 class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
   late List<File> _receipts;
+  List<File> _trash = [];
   final Set<String> _selectedPaths = {};
   Map<String, int> _totals = {};
+  bool _inTrash = false;
 
+  List<File> get _current => _inTrash ? _trash : _receipts;
   bool get _isSelecting => _selectedPaths.isNotEmpty;
 
   @override
   void initState() {
     super.initState();
     _receipts = List<File>.from(widget.receipts);
-    _sortReceipts();
+    _sort(_receipts);
     _loadTotals();
+    _loadTrash();
+  }
+
+  void _sort(List<File> files) {
+    files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
   }
 
   Future<void> _loadTotals() async {
@@ -36,12 +91,20 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     if (mounted) setState(() => _totals = totals);
   }
 
-  Future<void> _backfillMissingTotals(List<File> selected) async {}
-
-  void _sortReceipts() {
-    _receipts.sort(
-      (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()),
+  Future<void> _loadTrash() async {
+    final files = await ReceiptStorage.listJpgs(
+      await ReceiptStorage.trashDir(),
     );
+    _sort(files);
+    if (mounted) setState(() => _trash = files);
+  }
+
+  Future<void> _reloadSaved() async {
+    final files = await ReceiptStorage.listJpgs(
+      await ReceiptStorage.receiptsDir(),
+    );
+    _sort(files);
+    if (mounted) setState(() => _receipts = files);
   }
 
   String _formatReceiptTime(File file) {
@@ -70,10 +133,17 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
 
   Map<String, List<File>> _groupReceipts() {
     final groups = <String, List<File>>{};
-    for (final file in _receipts) {
+    for (final file in _current) {
       groups.putIfAbsent(_sectionTitle(file), () => []).add(file);
     }
     return groups;
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   // ---------- SELECTION ----------
@@ -100,7 +170,7 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
   }
 
   bool get _isEverythingSelected =>
-      _receipts.isNotEmpty && _selectedPaths.length == _receipts.length;
+      _current.isNotEmpty && _selectedPaths.length == _current.length;
 
   void _toggleSelectEverything() {
     setState(() {
@@ -109,25 +179,18 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
       } else {
         _selectedPaths
           ..clear()
-          ..addAll(_receipts.map((f) => f.path));
+          ..addAll(_current.map((f) => f.path));
       }
     });
   }
 
+  List<File> get _selectedFiles =>
+      _current.where((f) => _selectedPaths.contains(f.path)).toList();
+
   // ---------- CALCULATE ----------
-  Future<void> _showCalculation() async {
-    final selected =
-        _receipts.where((f) => _selectedPaths.contains(f.path)).toList();
-
-    await _backfillMissingTotals(selected);
-
-    if (!mounted) return;
-    _showCalculationDialog();
-  }
 
   void _showCalculationDialog() {
-    final selected =
-        _receipts.where((f) => _selectedPaths.contains(f.path)).toList();
+    final selected = _selectedFiles;
 
     int total = 0;
     int missing = 0;
@@ -220,22 +283,28 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     );
   }
 
-  // ---------- OPEN / SHARE / DELETE ----------
+  // ---------- OPEN / SHARE ----------
 
-  void _openReceipt(File file, List<File> dayFiles) {
+  Future<void> _openReceipt(File file, List<File> dayFiles) async {
     final initialIndex = dayFiles.indexWhere((item) => item.path == file.path);
 
-    Navigator.push(
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder:
             (context) => ReceiptViewerScreen(
               files: dayFiles,
               initialIndex: initialIndex < 0 ? 0 : initialIndex,
-              onShare: (file) => _shareFiles([file]),
+              isTrash: _inTrash,
+              onShare: _inTrash ? null : (file) => _shareFiles([file]),
             ),
       ),
     );
+
+    // The viewer may have deleted or restored images.
+    if (!mounted) return;
+    await _reloadSaved();
+    await _loadTrash();
   }
 
   Future<void> _shareFiles(List<File> files) async {
@@ -248,49 +317,35 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     if (!mounted) return;
 
     if (existingFiles.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('No receipt images found.')));
+      _showSnack('No receipt images found.');
       return;
     }
 
     try {
-      await ShareHelper.shareFiles(
-        existingFiles,
-        onNotice: (msg) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(msg)));
-        },
-      );
+      await ShareHelper.shareFiles(existingFiles, onNotice: _showSnack);
 
       if (mounted && _isSelecting) {
         setState(() => _selectedPaths.clear());
       }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Unable to share receipts: $e')));
+      _showSnack('Unable to share receipts: $e');
     }
   }
 
-  Future<void> _deleteSelected() async {
-    if (_selectedPaths.isEmpty) return;
+  // ---------- TRASH ACTIONS ----------
 
-    final count = _selectedPaths.length;
-
-    final confirmed = await showDialog<bool>(
+  Future<bool> _confirm({
+    required String title,
+    required String message,
+    required String action,
+    bool danger = true,
+  }) async {
+    final result = await showDialog<bool>(
       context: context,
       builder:
           (dialogContext) => AlertDialog(
-            title: const Text('Delete receipts?'),
-            content: Text(
-              'Are you sure you want to delete $count selected '
-              '${count == 1 ? 'receipt' : 'receipts'}? '
-              'This cannot be undone.',
-            ),
+            title: Text(title),
+            content: Text(message),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext, false),
@@ -298,55 +353,106 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
               ),
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
-                style: TextButton.styleFrom(foregroundColor: Colors.red),
-                child: const Text('Delete'),
+                style: TextButton.styleFrom(
+                  foregroundColor: danger ? Colors.red : null,
+                ),
+                child: Text(action),
               ),
             ],
           ),
     );
+    return result == true;
+  }
 
-    if (confirmed != true || !mounted) return;
+  String _countText(int n) => '$n ${n == 1 ? 'receipt' : 'receipts'}';
 
-    final pathsToDelete = Set<String>.from(_selectedPaths);
-    final failedPaths = <String>[];
-    final deletedNames = <String>[];
+  Future<void> _moveSelectedToTrash() async {
+    final files = _selectedFiles;
+    if (files.isEmpty) return;
 
-    for (final path in pathsToDelete) {
+    final ok = await _confirm(
+      title: 'Move to Trash?',
+      message:
+          'Move ${_countText(files.length)} to Trash? '
+          'You can restore them from Trash.',
+      action: 'Move',
+    );
+    if (!ok || !mounted) return;
+
+    var failed = 0;
+    for (final file in files) {
       try {
-        final file = File(path);
-        if (await file.exists()) await file.delete();
-        deletedNames.add(ReceiptTotals.nameOf(file));
+        await ReceiptStorage.moveToTrash(file);
       } catch (_) {
-        failedPaths.add(path);
+        failed++;
       }
     }
 
-    await ReceiptTotals.removeAll(deletedNames);
+    _selectedPaths.clear();
+    await _reloadSaved();
+    await _loadTrash();
 
-    if (!mounted) return;
+    _showSnack(
+      failed == 0
+          ? '${_countText(files.length)} moved to Trash.'
+          : '${files.length - failed} moved. $failed could not be moved.',
+    );
+  }
 
-    setState(() {
-      _receipts.removeWhere(
-        (file) =>
-            pathsToDelete.contains(file.path) &&
-            !failedPaths.contains(file.path),
-      );
-      for (final n in deletedNames) {
-        _totals.remove(n);
+  Future<void> _restoreSelected() async {
+    final files = _selectedFiles;
+    if (files.isEmpty) return;
+
+    var failed = 0;
+    for (final file in files) {
+      try {
+        await ReceiptStorage.restore(file);
+      } catch (_) {
+        failed++;
       }
-      _selectedPaths.clear();
-      _sortReceipts();
-    });
+    }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          failedPaths.isEmpty
-              ? '$count ${count == 1 ? 'receipt' : 'receipts'} deleted.'
-              : '${count - failedPaths.length} deleted. '
-                  '${failedPaths.length} could not be deleted.',
-        ),
-      ),
+    _selectedPaths.clear();
+    await _reloadSaved();
+    await _loadTrash();
+
+    _showSnack(
+      failed == 0
+          ? '${_countText(files.length)} restored.'
+          : '${files.length - failed} restored. $failed could not be restored.',
+    );
+  }
+
+  Future<void> _deleteSelectedForever() async {
+    final files = _selectedFiles;
+    if (files.isEmpty) return;
+
+    final ok = await _confirm(
+      title: 'Delete permanently?',
+      message:
+          'Permanently delete ${_countText(files.length)}? '
+          'This cannot be undone.',
+      action: 'Delete',
+    );
+    if (!ok || !mounted) return;
+
+    var failed = 0;
+    for (final file in files) {
+      try {
+        await ReceiptStorage.deleteForever(file);
+      } catch (_) {
+        failed++;
+      }
+    }
+
+    _selectedPaths.clear();
+    await _loadTrash();
+    await _loadTotals();
+
+    _showSnack(
+      failed == 0
+          ? '${_countText(files.length)} deleted permanently.'
+          : '${files.length - failed} deleted. $failed could not be deleted.',
     );
   }
 
@@ -452,7 +558,6 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
                   ),
                 ),
               ),
-              // Per-section "Select all" appears only in selection mode.
               if (_isSelecting)
                 TextButton.icon(
                   onPressed: () => _toggleSectionSelection(files),
@@ -468,6 +573,108 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
           ),
         ),
         _buildReceiptGrid(files),
+      ],
+    );
+  }
+
+  Widget _actionButton({
+    required VoidCallback onPressed,
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Expanded(
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18),
+        label: Text(label),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: Colors.white,
+          minimumSize: const Size(0, 48),
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelectionBar() {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        child: Row(
+          children:
+              _inTrash
+                  ? [
+                    _actionButton(
+                      onPressed: _restoreSelected,
+                      icon: Icons.restore,
+                      label: 'Restore',
+                      color: Colors.blue,
+                    ),
+                    const SizedBox(width: 8),
+                    _actionButton(
+                      onPressed: _deleteSelectedForever,
+                      icon: Icons.delete_forever,
+                      label: 'Delete forever',
+                      color: Colors.red,
+                    ),
+                  ]
+                  : [
+                    _actionButton(
+                      onPressed: () => _shareFiles(_selectedFiles),
+                      icon: Icons.share,
+                      label: 'Share',
+                      color: const Color(0xFF25D366),
+                    ),
+                    const SizedBox(width: 8),
+                    _actionButton(
+                      onPressed: _showCalculationDialog,
+                      icon: Icons.calculate,
+                      label: 'Calculate',
+                      color: Colors.blue,
+                    ),
+                    const SizedBox(width: 8),
+                    _actionButton(
+                      onPressed: _moveSelectedToTrash,
+                      icon: Icons.delete,
+                      label: 'Delete',
+                      color: Colors.red,
+                    ),
+                  ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabBar() {
+    return NavigationBar(
+      selectedIndex: _inTrash ? 1 : 0,
+      onDestinationSelected: (index) {
+        setState(() {
+          _inTrash = index == 1;
+          _selectedPaths.clear();
+        });
+      },
+      destinations: [
+        const NavigationDestination(
+          icon: Icon(Icons.photo_library_outlined),
+          selectedIcon: Icon(Icons.photo_library),
+          label: 'Saved',
+        ),
+        NavigationDestination(
+          icon: Badge(
+            isLabelVisible: _trash.isNotEmpty,
+            label: Text('${_trash.length}'),
+            child: const Icon(Icons.delete_outline),
+          ),
+          selectedIcon: Badge(
+            isLabelVisible: _trash.isNotEmpty,
+            label: Text('${_trash.length}'),
+            child: const Icon(Icons.delete),
+          ),
+          label: 'Trash',
+        ),
       ],
     );
   }
@@ -504,7 +711,9 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
         title: Text(
           _isSelecting
               ? '${_selectedPaths.length} selected'
-              : 'Saved Tokens (${_receipts.length})',
+              : _inTrash
+              ? 'Trash (${_trash.length})'
+              : 'Tokens (${_receipts.length})',
         ),
         actions: [
           if (_isSelecting)
@@ -519,8 +728,13 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
         ],
       ),
       body:
-          _receipts.isEmpty
-              ? const Center(child: Text('No saved receipts yet.'))
+          _current.isEmpty
+              ? Center(
+                child: Text(
+                  _inTrash ? 'Trash is empty' : 'No images saved yet',
+                  style: const TextStyle(fontSize: 16, color: Colors.grey),
+                ),
+              )
               : ListView(
                 children: [
                   for (final title in orderedTitles)
@@ -528,67 +742,7 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
                   const SizedBox(height: 8),
                 ],
               ),
-      bottomNavigationBar:
-          _isSelecting
-              ? SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: () {
-                            final selectedFiles =
-                                _receipts
-                                    .where(
-                                      (f) => _selectedPaths.contains(f.path),
-                                    )
-                                    .toList();
-                            _shareFiles(selectedFiles);
-                          },
-                          icon: const Icon(Icons.share, size: 18),
-                          label: const Text('Share'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF25D366),
-                            foregroundColor: Colors.white,
-                            minimumSize: const Size(0, 48),
-                            padding: const EdgeInsets.symmetric(horizontal: 6),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: _showCalculation,
-                          icon: const Icon(Icons.calculate, size: 18),
-                          label: const Text('Calculate'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue,
-                            foregroundColor: Colors.white,
-                            minimumSize: const Size(0, 48),
-                            padding: const EdgeInsets.symmetric(horizontal: 6),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: _deleteSelected,
-                          icon: const Icon(Icons.delete, size: 18),
-                          label: const Text('Delete'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.red,
-                            foregroundColor: Colors.white,
-                            minimumSize: const Size(0, 48),
-                            padding: const EdgeInsets.symmetric(horizontal: 6),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-              : null,
+      bottomNavigationBar: _isSelecting ? _buildSelectionBar() : _buildTabBar(),
     );
   }
 }
@@ -596,13 +750,15 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
 class ReceiptViewerScreen extends StatefulWidget {
   final List<File> files;
   final int initialIndex;
-  final Future<void> Function(File file) onShare;
+  final Future<void> Function(File file)? onShare;
+  final bool isTrash;
 
   const ReceiptViewerScreen({
     super.key,
     required this.files,
     required this.initialIndex,
-    required this.onShare,
+    this.onShare,
+    this.isTrash = false,
   });
 
   @override
@@ -611,6 +767,7 @@ class ReceiptViewerScreen extends StatefulWidget {
 
 class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
   late final PageController _pageController;
+  late final List<File> _files;
   late final List<PhotoViewScaleStateController> _scaleControllers;
 
   late int _currentIndex;
@@ -619,11 +776,12 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
   void initState() {
     super.initState();
 
-    _currentIndex = widget.initialIndex;
-    _pageController = PageController(initialPage: widget.initialIndex);
+    _files = List<File>.from(widget.files);
+    _currentIndex = widget.initialIndex.clamp(0, _files.length - 1);
+    _pageController = PageController(initialPage: _currentIndex);
 
     _scaleControllers = List.generate(
-      widget.files.length,
+      _files.length,
       (_) => PhotoViewScaleStateController(),
     );
   }
@@ -651,11 +809,132 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
     });
   }
 
+  /// Removes the current image from this viewer after it was
+  /// moved, restored or deleted.
+  void _removeCurrentFromList(String message) {
+    final index = _currentIndex;
+    final removedController = _scaleControllers.removeAt(index);
+    _files.removeAt(index);
+
+    // Dispose after the gallery has rebuilt without it.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      removedController.dispose();
+    });
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+
+    if (_files.isEmpty) {
+      Navigator.pop(context, true);
+      return;
+    }
+
+    final newIndex = index >= _files.length ? _files.length - 1 : index;
+
+    setState(() => _currentIndex = newIndex);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_pageController.hasClients) {
+        _pageController.jumpToPage(newIndex);
+      }
+    });
+  }
+
+  Future<void> _moveToTrash() async {
+    try {
+      await ReceiptStorage.moveToTrash(_files[_currentIndex]);
+      if (!mounted) return;
+      _removeCurrentFromList('Moved to Trash.');
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not delete.')));
+    }
+  }
+
+  Future<void> _restore() async {
+    try {
+      await ReceiptStorage.restore(_files[_currentIndex]);
+      if (!mounted) return;
+      _removeCurrentFromList('Restored.');
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not restore.')));
+    }
+  }
+
+  Future<void> _deleteForever() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Text('Delete permanently?'),
+            content: const Text(
+              'This receipt will be deleted forever. This cannot be undone.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await ReceiptStorage.deleteForever(_files[_currentIndex]);
+      if (!mounted) return;
+      _removeCurrentFromList('Deleted permanently.');
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not delete.')));
+    }
+  }
+
+  Widget _bottomButton({
+    required VoidCallback onPressed,
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Expanded(
+      child: SizedBox(
+        height: 52,
+        child: ElevatedButton.icon(
+          onPressed: onPressed,
+          icon: Icon(icon),
+          label: Text(label),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: color,
+            foregroundColor: Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Token ${_currentIndex + 1}/${widget.files.length}'),
+        title: Text(
+          '${widget.isTrash ? 'Trash' : 'Token'} '
+          '${_currentIndex + 1}/${_files.length}',
+        ),
         actions: [
           IconButton(
             tooltip: 'Toggle zoom',
@@ -665,7 +944,7 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
         ],
       ),
       body: PhotoViewGallery.builder(
-        itemCount: widget.files.length,
+        itemCount: _files.length,
         pageController: _pageController,
         gaplessPlayback: true,
         backgroundDecoration: BoxDecoration(
@@ -679,7 +958,7 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
         },
         builder: (context, index) {
           return PhotoViewGalleryPageOptions(
-            imageProvider: FileImage(widget.files[index]),
+            imageProvider: FileImage(_files[index]),
             initialScale: PhotoViewComputedScale.contained,
             minScale: PhotoViewComputedScale.contained,
             maxScale: PhotoViewComputedScale.covered * 5,
@@ -693,20 +972,42 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: ElevatedButton.icon(
-              onPressed: () {
-                widget.onShare(widget.files[_currentIndex]);
-              },
-              icon: const Icon(Icons.share),
-              label: const Text('Share to WhatsApp'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF25D366),
-                foregroundColor: Colors.white,
-              ),
-            ),
+          child: Row(
+            children:
+                widget.isTrash
+                    ? [
+                      _bottomButton(
+                        onPressed: _restore,
+                        icon: Icons.restore,
+                        label: 'Restore',
+                        color: Colors.blue,
+                      ),
+                      const SizedBox(width: 10),
+                      _bottomButton(
+                        onPressed: _deleteForever,
+                        icon: Icons.delete_forever,
+                        label: 'Delete forever',
+                        color: Colors.red,
+                      ),
+                    ]
+                    : [
+                      if (widget.onShare != null) ...[
+                        _bottomButton(
+                          onPressed:
+                              () => widget.onShare!(_files[_currentIndex]),
+                          icon: Icons.share,
+                          label: 'Share to WhatsApp',
+                          color: const Color(0xFF25D366),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      _bottomButton(
+                        onPressed: _moveToTrash,
+                        icon: Icons.delete,
+                        label: 'Delete',
+                        color: Colors.red,
+                      ),
+                    ],
           ),
         ),
       ),
