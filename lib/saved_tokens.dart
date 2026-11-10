@@ -5,7 +5,6 @@ import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:flutter/services.dart';
 
 class SavedReceiptsScreen extends StatefulWidget {
@@ -37,74 +36,7 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     if (mounted) setState(() => _totals = totals);
   }
 
-  /// Reads "Total: ₹ 1250" from the receipt image.
-  Future<int?> _readTotalFromImage(File file) async {
-    final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
-    try {
-      final result = await recognizer.processImage(InputImage.fromFile(file));
-
-      // "Total" followed by up to a few non-digit chars (":", "₹", spaces, newline).
-      final matches = RegExp(
-        r'total\D{0,6}(\d+)',
-        caseSensitive: false,
-      ).allMatches(result.text);
-
-      if (matches.isEmpty) return null;
-
-      // The grand total is the last "Total" on the receipt.
-      return int.tryParse(matches.last.group(1)!);
-    } catch (e) {
-      debugPrint('OCR failed for ${file.path}: $e');
-      return null;
-    } finally {
-      recognizer.close();
-    }
-  }
-
-  /// Reads and saves totals for selected receipts that don't have one yet.
-  Future<void> _backfillMissingTotals(List<File> selected) async {
-    final missing =
-        selected
-            .where((f) => !_totals.containsKey(ReceiptTotals.nameOf(f)))
-            .toList();
-
-    if (missing.isEmpty) return;
-
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder:
-          (_) => PopScope(
-            canPop: false,
-            child: AlertDialog(
-              content: Row(
-                children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(width: 20),
-                  Expanded(
-                    child: Text(
-                      'Reading ${missing.length} older receipt(s)...',
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-    );
-
-    for (final file in missing) {
-      final amount = await _readTotalFromImage(file);
-      if (amount != null) {
-        final name = ReceiptTotals.nameOf(file);
-        await ReceiptTotals.save(name, amount);
-        _totals[name] = amount;
-      }
-    }
-
-    if (mounted) {
-      Navigator.of(context, rootNavigator: true).pop(); // close loader
-    }
-  }
+  Future<void> _backfillMissingTotals(List<File> selected) async {}
 
   void _sortReceipts() {
     _receipts.sort(
