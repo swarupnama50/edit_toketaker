@@ -9,7 +9,6 @@ import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:token_taker/app_updater.dart';
 import 'package:token_taker/payment_dialog.dart';
-import 'package:token_taker/cloud_sync.dart';
 
 class FirstScreen extends StatefulWidget {
   const FirstScreen({super.key});
@@ -365,10 +364,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   bool _hasCurrentData() {
     final name = nameController.text.trim();
-    final nameIsOnlyDefault =
-        name.isNotEmpty && name == CloudSync.displayName.trim();
-
-    return (name.isNotEmpty && !nameIsOnlyDefault) ||
+    return name.isNotEmpty ||
         numControllers.any((c) => c.text.trim().isNotEmpty) ||
         frControllers.any((c) => c.text.trim().isNotEmpty) ||
         srControllers.any((c) => c.text.trim().isNotEmpty);
@@ -499,16 +495,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       items: [
         // <- no const
         PopupMenuItem(
-          value: 'google',
-          child: Row(
-            children: [
-              Icon(CloudSync.menuIcon),
-              const SizedBox(width: 12),
-              Text(CloudSync.menuLabel),
-            ],
-          ),
-        ),
-        PopupMenuItem(
           value: 'drafts',
           child: Row(
             children: [
@@ -570,15 +556,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       if (value == null || !mounted) return;
 
       switch (value) {
-        case 'google':
-          {
-            final wasLoggedIn = CloudSync.isLoggedIn;
-            CloudSync.handleMenuTap(context).then((changed) {
-              if (changed) _reloadAfterSync();
-              if (!wasLoggedIn && CloudSync.isLoggedIn) _fillAccountName();
-            });
-          }
-          break;
         case 'drafts':
           _showDrafts();
           break;
@@ -637,8 +614,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     bool saveOpen = false;
     bool shareOpen = false;
-    bool autoSyncOn = CloudSync.autoSyncEnabled;
-    bool syncing = false;
 
     const saveOptions = [
       (0, 'App only', 'Only in the Saved Tokens screen'),
@@ -1034,62 +1009,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                           await _checkAutoTrSchedule();
                         },
                       ),
-                    // ---------- AUTO SYNC (only when logged in) ----------
-                    if (CloudSync.isLoggedIn) ...[
-                      const Divider(height: 28),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text(
-                          'Auto sync',
-                          style: TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        subtitle: Text(
-                          autoSyncOn
-                              ? 'Settings, drafts and images sync automatically.'
-                              : 'Off. Tap Sync now to back up and restore.',
-                        ),
-                        value: autoSyncOn,
-                        activeTrackColor: _primaryColor,
-                        onChanged: (value) async {
-                          setDialogState(() => autoSyncOn = value);
-                          await CloudSync.setAutoSync(value);
-                        },
-                      ),
-                      if (!autoSyncOn)
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: OutlinedButton.icon(
-                            onPressed:
-                                syncing
-                                    ? null
-                                    : () async {
-                                      setDialogState(() => syncing = true);
-                                      final ok = await CloudSync.syncAll();
-                                      if (ok) await _reloadAfterSync();
-                                      if (dialogContext.mounted) {
-                                        setDialogState(() => syncing = false);
-                                      }
-                                      if (!mounted) return;
-                                      _showAppSnackBar(
-                                        ok
-                                            ? 'Synced'
-                                            : 'Sync failed. Check internet.',
-                                      );
-                                    },
-                            icon:
-                                syncing
-                                    ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                    : const Icon(Icons.sync),
-                            label: Text(syncing ? 'Syncing...' : 'Sync now'),
-                          ),
-                        ),
-                    ],
                   ],
                 ),
               ),
@@ -1365,7 +1284,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
 
     await prefs.setString(_draftsKey, jsonEncode(_drafts));
-    CloudSync.scheduleSync();
   }
 
   Future<void> _loadDrafts() async {
@@ -1518,9 +1436,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _checkAutoTrSchedule();
-      CloudSync.syncIfLoggedIn().then((changed) {
-        if (changed) _reloadAfterSync();
-      });
     }
 
     if (state == AppLifecycleState.inactive ||
@@ -1528,9 +1443,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         state == AppLifecycleState.detached) {
       _workingSaveTimer?.cancel();
       _saveWorkingState();
-      if (state == AppLifecycleState.paused) {
-        CloudSync.syncIfLoggedIn(); // push changes before the app goes to background
-      }
     }
   }
 
@@ -2107,35 +2019,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     });
   }
 
-  Future<void> _reloadAfterSync() async {
-    final prefs = await SharedPreferences.getInstance();
-    await _loadDrafts();
-    final tr = prefs.getBool('isTRMode') ?? false;
-    if (!mounted) return;
-    setState(() {
-      if (tr != isTRMode) {
-        if (tr) {
-          _convertAmountsForTRMode();
-        } else {
-          _convertAmountsForFRSRMode();
-        }
-        isTRMode = tr;
-      }
-      _saveDestination = prefs.getInt(_saveDestinationKey) ?? _saveDestination;
-    });
-    await _loadTodayReceiptCount();
-  }
-
-  // Fills the name box with the Google account name when it is empty.
-  void _fillAccountName() {
-    final name = CloudSync.displayName.trim();
-    if (name.isEmpty) return;
-    if (nameController.text.trim().isEmpty) {
-      nameController.text = name;
-      _scheduleWorkingSave();
-    }
-  }
-
   Future<void> _loadMode() async {
     final prefs = await SharedPreferences.getInstance();
     final savedMode = prefs.getBool('isTRMode') ?? false;
@@ -2146,9 +2029,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     await _checkAutoTrSchedule();
     await _checkAutoTrSchedule();
 
-    CloudSync.syncIfLoggedIn().then((changed) {
-      if (changed) _reloadAfterSync();
-    });
 
     if (mounted) {
       await _showFirstInstallGuide();

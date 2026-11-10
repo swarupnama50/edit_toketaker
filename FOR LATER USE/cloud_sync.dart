@@ -2,41 +2,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:token_taker/saved_tokens.dart' show ShareHelper;
 
-/// Optional Google login + server sync.
-///
-/// - Not logged in  -> everything stays only on the device (as before).
-/// - Logged in      -> everything stays on the device AND is copied to the
-///                     server. Logging in on a new/old device restores
-///                     settings, drafts and receipt images from the server.
-/// - Auto sync ON   -> syncs by itself. OFF (default) -> user taps "Sync now"
-///                     in Settings. Login always syncs once.
-///
-/// Login uses the native Google account chooser inside the app
-/// (no browser).
-///
-/// Server layout (all in Firestore, folder name = Google email):
-///   users/{email}/meta/settings
-///   users/{email}/meta/profile                   (name, email, photo, phone)
-///   users/{email}/drafts/{draftId}
-///   users/{email}/receipts/{file}.jpg            (+ /parts/0000, 0001 ...)
 class CloudSync {
   CloudSync._();
 
   static const String _draftsKey = 'token_taker_drafts';
   static const String _autoSyncKey = 'auto_sync_enabled';
 
-  // Settings that are copied to the server. Device-specific values such as
-  // auto_tr_last_on_date and auto_sync_enabled are intentionally left out.
   static List<String> get _settingKeys => [
     'isTRMode',
     'save_destination',
@@ -150,11 +126,6 @@ class CloudSync {
   // Max base64 characters per Firestore document (limit is 1 MiB).
   static const int _chunkSize = 700000;
 
-  // ---------------------------------------------------------------------
-  // LOGIN / LOGOUT
-  // ---------------------------------------------------------------------
-
-  /// Opens the native Google account chooser (no browser).
   /// Returns true if the user signed in.
   static Future<bool> signIn() async {
     if (!_available) return false;
@@ -189,9 +160,6 @@ class CloudSync {
   // SYNC ENTRY POINTS
   // ---------------------------------------------------------------------
 
-  /// Automatic sync (app open / resume / background).
-  /// Does nothing when logged out or when Auto sync is OFF.
-  /// Returns true if it synced (so the screen should reload).
   static Future<bool> syncIfLoggedIn() async {
     if (!isLoggedIn || !_autoSync) return false;
     return syncAll();

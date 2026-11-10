@@ -1,12 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:token_taker/cloud_sync.dart'; // NEW
 import 'package:token_taker/first_screen.dart';
 
-Future<void> main() async {
-  // CHANGED: async
-  WidgetsFlutterBinding.ensureInitialized(); // NEW
-  await CloudSync.init(); // NEW
-
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 
