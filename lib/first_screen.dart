@@ -7,7 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:token_taker/app_updater.dart';
+
 import 'package:token_taker/payment_dialog.dart';
 
 class FirstScreen extends StatefulWidget {
@@ -1379,7 +1379,15 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
       _restoringWorkingState = true;
 
-      // Ensure enough controllers exist to restore every saved row.
+      // Ignore blank rows at the end, so old saved extras are dropped too.
+      while (rows.isNotEmpty &&
+          (rows.last['num'] as String? ?? '').trim().isEmpty &&
+          (rows.last['fr'] as String? ?? '').trim().isEmpty &&
+          (rows.last['sr'] as String? ?? '').trim().isEmpty) {
+        rows.removeLast();
+      }
+
+      // Filled rows + exactly one blank row below.
       final requiredRows = (rows.length + 1).clamp(1, 200);
 
       while (numControllers.length < requiredRows) {
@@ -1533,7 +1541,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
           final amount = int.tryParse(possibleAmount);
 
-          if (amount == null || amount < 1 || amount > 15000) {
+          if (amount == null ||
+              amount < 1 ||
+              amount > 15000 ||
+              possibleAmount.startsWith('0')) {
             continue;
           }
 
@@ -1601,7 +1612,11 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
         if (digitsOnly.hasMatch(t)) {
           final amount = int.tryParse(t);
-          final valid = amount != null && amount >= 1 && amount <= 15000;
+          final valid =
+              amount != null &&
+              amount >= 1 &&
+              amount <= 15000 &&
+              !t.startsWith('0');
 
           if (valid) {
             if (pendingLabel == 'FR') {
@@ -1646,6 +1661,33 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     }
 
     if (parsedRows.isEmpty || !mounted) return;
+    // If the list already has entries, ask before pasting more.
+    if (numControllers.any((c) => c.text.trim().isNotEmpty)) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder:
+            (dialogContext) => AlertDialog(
+              title: const Text('Paste again?'),
+              content: Text(
+                'There is already data in the list. '
+                'Add ${parsedRows.length} '
+                '${parsedRows.length == 1 ? 'row' : 'rows'} below it?',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('Paste'),
+                ),
+              ],
+            ),
+      );
+
+      if (confirmed != true || !mounted) return;
+    }
 
     int startIndex = numControllers.indexWhere(
       (controller) => controller.text.trim().isEmpty,
@@ -2013,10 +2055,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       const Duration(seconds: 20),
       (_) => _checkAutoTrSchedule(),
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      AppUpdater.checkForUpdate(context);
-    });
   }
 
   Future<void> _loadMode() async {
@@ -2029,10 +2067,19 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     await _checkAutoTrSchedule();
     await _checkAutoTrSchedule();
 
-
     if (mounted) {
       await _showFirstInstallGuide();
     }
+
+    // Focus the first empty Num box, as if it was tapped.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || numFocusNodes.isEmpty) return;
+
+      var target = numControllers.indexWhere((c) => c.text.trim().isEmpty);
+      if (target == -1) target = numControllers.length - 1;
+
+      numFocusNodes[target].requestFocus();
+    });
   }
 
   Future<void> _saveMode(bool value) async {
@@ -3500,10 +3547,11 @@ class AmountInputFormatter extends TextInputFormatter {
   ) {
     final text = newValue.text;
 
-    // Allow up to 5 digits, optional I at the end,
-    // or one trailing space for keyboard navigation.
-    if (RegExp(r'^\d{0,5}[Ii]?$').hasMatch(text) ||
-        RegExp(r'^\d{0,5}[Ii]? $').hasMatch(text)) {
+    // First digit must be 1-9; after that 0-9 is allowed (1010, 1001, 11020).
+    // Up to 5 digits, optional "i" at the end, or one trailing space
+    // for keyboard navigation.
+    if (RegExp(r'^(?:[1-9]\d{0,4}[Ii]?)?$').hasMatch(text) ||
+        RegExp(r'^(?:[1-9]\d{0,4}[Ii]?)? $').hasMatch(text)) {
       return newValue;
     }
 
