@@ -560,39 +560,6 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     );
   }
 
-  Future<void> _deleteSelectedForever() async {
-    final files = _selectedFiles;
-    if (files.isEmpty) return;
-
-    final ok = await _confirm(
-      title: 'Delete permanently?',
-      message:
-          'Permanently delete ${_countText(files.length)}? '
-          'This cannot be undone.',
-      action: 'Delete',
-    );
-    if (!ok || !mounted) return;
-
-    var failed = 0;
-    for (final file in files) {
-      try {
-        await ReceiptStorage.deleteForever(file);
-      } catch (_) {
-        failed++;
-      }
-    }
-
-    _selectedPaths.clear();
-    await _loadTrash();
-    await _loadTotals();
-
-    _showSnack(
-      failed == 0
-          ? '${_countText(files.length)} deleted permanently.'
-          : '${files.length - failed} deleted. $failed could not be deleted.',
-    );
-  }
-
   // ---------- UI ----------
 
   Widget _buildReceiptGrid(List<File> files) {
@@ -786,20 +753,8 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
                       color: Colors.blue,
                     ),
                     const SizedBox(width: 8),
-                    _actionButton(
-                      onPressed: _deleteSelectedForever,
-                      icon: Icons.delete_forever,
-                      label: 'Delete forever',
-                      color: Colors.red,
-                    ),
                   ]
                   : [
-                    _actionButton(
-                      onPressed: () => _shareFiles(_selectedFiles),
-                      icon: Icons.share,
-                      label: 'Share',
-                      color: const Color(0xFF25D366),
-                    ),
                     const SizedBox(width: 8),
                     _actionButton(
                       onPressed: _showCalculationDialog,
@@ -813,6 +768,12 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
                       icon: Icons.delete,
                       label: 'Delete',
                       color: Colors.red,
+                    ),
+                    _actionButton(
+                      onPressed: () => _shareFiles(_selectedFiles),
+                      icon: Icons.share,
+                      label: 'Share',
+                      color: const Color(0xFF25D366),
                     ),
                   ],
         ),
@@ -962,7 +923,6 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
   late final PageController _pageController;
   late final List<File> _files;
   late final List<PhotoViewScaleStateController> _scaleControllers;
-  final ScrollController _thumbScroll = ScrollController();
 
   late int _currentIndex;
 
@@ -994,7 +954,6 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
   @override
   void dispose() {
     _pageController.dispose();
-    _thumbScroll.dispose();
 
     for (final controller in _scaleControllers) {
       controller.dispose();
@@ -1019,9 +978,29 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
     }
   }
 
+  Future<void> _handleShare() async {
+    if (_files.isEmpty) return;
+
+    if (_panelOpen) {
+      await _shareSelected();
+      return;
+    }
+
+    // Without sliding up, share only the current image.
+    final currentFile = _files[_currentIndex];
+
+    try {
+      await ShareHelper.shareFiles([currentFile]);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Unable to share image: $e')));
+    }
+  }
+
   void _onPointerMove(PointerMoveEvent e) {
     if (widget.onShare == null ||
-        _panelOpen ||
         _pointers != 1 ||
         _multiTouch ||
         _downPos == null ||
@@ -1032,17 +1011,24 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
     final d = e.position - _downPos!;
 
     if (!_verticalLocked) {
-      if (d.dy < -14 && d.dy.abs() > d.dx.abs() * 2) {
+      final isCorrectDirection = _panelOpen ? d.dy > 14 : d.dy < -14;
+
+      if (isCorrectDirection && d.dy.abs() > d.dx.abs() * 2) {
         _verticalLocked = true;
       } else {
         return;
       }
     }
 
-    // The image follows the finger a little.
     setState(() {
       _dragging = true;
-      _dragY = (d.dy * 0.6).clamp(-160.0, 0.0);
+
+      // Panel closed: image follows upward.
+      // Panel open: image follows downward.
+      _dragY =
+          _panelOpen
+              ? (d.dy * 0.6).clamp(0.0, 160.0)
+              : (d.dy * 0.6).clamp(-160.0, 0.0);
     });
   }
 
@@ -1051,7 +1037,10 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
     if (_pointers != 0) return;
 
     final wasLocked = _verticalLocked;
+    final wasPanelOpen = _panelOpen;
+
     final d = _downPos == null ? Offset.zero : e.position - _downPos!;
+
     _verticalLocked = false;
     _downPos = null;
 
@@ -1070,7 +1059,11 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
       _dragY = 0;
     });
 
-    if (d.dy < -100) _openPanel();
+    if (wasPanelOpen && d.dy > 100) {
+      _closePanel();
+    } else if (!wasPanelOpen && d.dy < -100) {
+      _openPanel();
+    }
   }
 
   void _onPointerCancel(PointerCancelEvent e) {
@@ -1088,23 +1081,12 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
   void _openPanel() {
     if (_files.isEmpty) return;
 
-    _shareSel
-      ..clear()
-      ..add(_files[_currentIndex].path);
+    setState(() {
+      _shareSel
+        ..clear()
+        ..add(_files[_currentIndex].path);
 
-    setState(() => _panelOpen = true);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_thumbScroll.hasClients) return;
-      final target = (_currentIndex * 100.0 - 100).clamp(
-        0.0,
-        _thumbScroll.position.maxScrollExtent,
-      );
-      _thumbScroll.animateTo(
-        target,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
+      _panelOpen = true;
     });
   }
 
@@ -1140,6 +1122,12 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
     }
 
     if (mounted) setState(() => _panelOpen = false);
+  }
+
+  void _toggleCurrentImageSelection() {
+    if (_files.isEmpty) return;
+
+    _toggleShareSel(_files[_currentIndex]);
   }
 
   void _toggleZoom() {
@@ -1272,132 +1260,56 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
     );
   }
 
-  Widget _buildThumb(int index) {
-    final file = _files[index];
-    final selected = _shareSel.contains(file.path);
-    final isCurrent = index == _currentIndex;
-
-    return GestureDetector(
-      onTap: () => _toggleShareSel(file),
-      child: AnimatedScale(
-        scale: selected ? 0.94 : 1.0,
-        duration: const Duration(milliseconds: 150),
-        child: Container(
-          width: 92,
-          height: 92,
-          margin: const EdgeInsets.only(right: 8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isCurrent ? Colors.blue : Colors.grey.shade300,
-              width: isCurrent ? 2 : 1,
-            ),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Container(color: Colors.white),
-                Image.file(
-                  file,
-                  fit: BoxFit.fitWidth,
-                  alignment: Alignment.topCenter,
-                  cacheWidth: 300,
-                  errorBuilder: (_, _, _) => const Icon(Icons.broken_image),
-                ),
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: AnimatedOpacity(
-                      opacity: selected ? 1 : 0,
-                      duration: const Duration(milliseconds: 150),
-                      child: Container(
-                        color: Colors.blue.withValues(alpha: 0.3),
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  top: 3,
-                  right: 3,
-                  child: Icon(
-                    selected
-                        ? Icons.check_circle
-                        : Icons.radio_button_unchecked,
-                    color: selected ? Colors.blue : Colors.white,
-                    size: 20,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildSharePanel() {
-    final allSelected = _shareCount == _files.length;
-
     return Material(
       elevation: 12,
       color: Theme.of(context).colorScheme.surface,
       borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
-        child: Column(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            SizedBox(
-              height: 44,
-              child: Row(
-                children: [
-                  Text(
-                    '$_shareCount selected',
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const Spacer(),
-                  TextButton(
-                    onPressed:
-                        () => setState(() {
-                          if (allSelected) {
-                            _shareSel.clear();
-                          } else {
-                            _shareSel.addAll(_files.map((f) => f.path));
-                          }
-                        }),
-                    child: Text(allSelected ? 'Clear' : 'Select all'),
-                  ),
-                  IconButton(
-                    tooltip: 'Close',
-                    icon: const Icon(Icons.keyboard_arrow_down),
-                    onPressed: _closePanel,
-                  ),
-                ],
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  if (_shareCount == _files.length) {
+                    _shareSel.clear();
+                  } else {
+                    _shareSel.addAll(_files.map((f) => f.path));
+                  }
+                });
+              },
+              child: Text(
+                _shareCount == _files.length ? 'Clear' : 'Select all',
+                style: const TextStyle(fontSize: 14),
               ),
             ),
-            SizedBox(
-              height: 94,
-              child: ListView.builder(
-                controller: _thumbScroll,
-                scrollDirection: Axis.horizontal,
-                itemCount: _files.length,
-                itemBuilder: (context, i) => _buildThumb(i),
-              ),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              height: 46,
-              child: ElevatedButton.icon(
-                onPressed: _shareCount == 0 ? null : _shareSelected,
-                icon: const Icon(Icons.share),
-                label: Text('Share ($_shareCount)'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF25D366),
-                  foregroundColor: Colors.white,
+
+            // Current image selection tick
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _toggleCurrentImageSelection,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 4, top: 8, bottom: 8),
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color:
+                        _shareSel.contains(_files[_currentIndex].path)
+                            ? Colors.blue
+                            : Colors.black45,
+                    border: Border.all(color: Colors.white, width: 1.5),
+                  ),
+                  child: Icon(
+                    _shareSel.contains(_files[_currentIndex].path)
+                        ? Icons.check
+                        : Icons.add,
+                    color: Colors.white,
+                    size: 19,
+                  ),
                 ),
               ),
             ),
@@ -1447,33 +1359,49 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
                           : const Duration(milliseconds: 250),
                   curve: Curves.easeOut,
                   transform: Matrix4.translationValues(0, _dragY, 0),
-                  child: PhotoViewGallery.builder(
-                    itemCount: _files.length,
-                    pageController: _pageController,
-                    gaplessPlayback: true,
-                    backgroundDecoration: BoxDecoration(
-                      color: Theme.of(context).scaffoldBackgroundColor,
-                    ),
-                    scrollPhysics: const PageScrollPhysics(),
-                    onPageChanged: (index) {
-                      setState(() {
-                        _currentIndex = index;
-                      });
-                    },
-                    builder: (context, index) {
-                      return PhotoViewGalleryPageOptions(
-                        imageProvider: FileImage(_files[index]),
-                        initialScale: PhotoViewComputedScale.contained,
-                        minScale: PhotoViewComputedScale.contained,
-                        maxScale: PhotoViewComputedScale.covered * 5,
-                        scaleStateController: _scaleControllers[index],
-                        errorBuilder: (context, error, stackTrace) {
-                          return const Center(
-                            child: Icon(Icons.broken_image, size: 60),
+                  child: Stack(
+                    children: [
+                      PhotoViewGallery.builder(
+                        itemCount: _files.length,
+                        pageController: _pageController,
+                        gaplessPlayback: true,
+                        backgroundDecoration: BoxDecoration(
+                          color: Theme.of(context).scaffoldBackgroundColor,
+                        ),
+                        scrollPhysics: const PageScrollPhysics(),
+                        onPageChanged: (index) {
+                          setState(() {
+                            _currentIndex = index;
+                          });
+                        },
+                        builder: (context, index) {
+                          return PhotoViewGalleryPageOptions(
+                            imageProvider: FileImage(_files[index]),
+                            initialScale: PhotoViewComputedScale.contained,
+                            minScale: PhotoViewComputedScale.contained,
+                            maxScale: PhotoViewComputedScale.covered * 5,
+                            scaleStateController: _scaleControllers[index],
+                            errorBuilder: (context, error, stackTrace) {
+                              return const Center(
+                                child: Icon(Icons.broken_image, size: 60),
+                              );
+                            },
                           );
                         },
-                      );
-                    },
+                      ),
+
+                      // Tap the image to select or deselect it.
+                      if (_panelOpen)
+                        Positioned.fill(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.translucent,
+                            onTap: _toggleCurrentImageSelection,
+                          ),
+                        ),
+
+                      // Selection tick at bottom-right.
+                      // Small selection tick at bottom-right.
+                    ],
                   ),
                 ),
               ),
@@ -1523,10 +1451,9 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
                         if (widget.onShare != null) ...[
                           const SizedBox(width: 10),
                           _bottomButton(
-                            onPressed:
-                                () => widget.onShare!(_files[_currentIndex]),
+                            onPressed: _handleShare,
                             icon: Icons.share,
-                            label: 'Share',
+                            label: 'Share (${_panelOpen ? _shareCount : 1})',
                             color: const Color(0xFF25D366),
                           ),
                         ],
@@ -1657,7 +1584,7 @@ class ShareHelper {
         onNotice?.call('WhatsApp is not installed. Using normal share.');
       } catch (e) {
         debugPrint('WhatsApp share failed: $e');
-        onNotice?.call('Could not open WhatsApp. Using normal share.');
+        onNotice?.call('Could not open WhatsApp ($e). Using normal share.');
       }
     }
 
