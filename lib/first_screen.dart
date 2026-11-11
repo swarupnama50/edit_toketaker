@@ -582,10 +582,11 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   Future<void> showSettingsDialog() async {
     final prefs = await SharedPreferences.getInstance();
 
-    bool autoTrEnabled = prefs.getBool(_autoTrEnabledKey) ?? false;
+    bool autoTrEnabled = prefs.getBool(_autoTrEnabledKey) ?? true;
+
     TimeOfDay autoTrTime = TimeOfDay(
-      hour: prefs.getInt(_autoTrHourKey) ?? 15,
-      minute: prefs.getInt(_autoTrMinuteKey) ?? 0,
+      hour: prefs.getInt(_autoTrHourKey) ?? 17,
+      minute: prefs.getInt(_autoTrMinuteKey) ?? 45,
     );
 
     // Use the saved choice; older versions stored a true/false switch.
