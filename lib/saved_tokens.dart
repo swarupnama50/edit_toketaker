@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -7,6 +9,21 @@ import 'package:photo_view/photo_view_gallery.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
+
+/// Smooth fade when opening the viewer.
+Route<T> _fadeRoute<T>(Widget page) {
+  return PageRouteBuilder<T>(
+    pageBuilder: (context, animation, secondary) => page,
+    transitionDuration: const Duration(milliseconds: 220),
+    reverseTransitionDuration: const Duration(milliseconds: 180),
+    transitionsBuilder: (context, animation, secondary, child) {
+      return FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+        child: child,
+      );
+    },
+  );
+}
 
 /// Folders for saved and trashed receipts.
 class ReceiptStorage {
@@ -70,6 +87,16 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
   Map<String, int> _totals = {};
   bool _inTrash = false;
 
+  final ScrollController _scroll = ScrollController();
+  final GlobalKey _listKey = GlobalKey();
+  final Map<String, GlobalKey> _cellKeys = {};
+
+  // Hold-and-slide selection state.
+  int? _anchorIndex;
+  Set<String> _baseSelection = {};
+  Offset? _dragPos;
+  Timer? _autoScrollTimer;
+
   List<File> get _current => _inTrash ? _trash : _receipts;
   bool get _isSelecting => _selectedPaths.isNotEmpty;
 
@@ -80,6 +107,13 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     _sort(_receipts);
     _loadTotals();
     _loadTrash();
+  }
+
+  @override
+  void dispose() {
+    _autoScrollTimer?.cancel();
+    _scroll.dispose();
+    super.dispose();
   }
 
   void _sort(List<File> files) {
@@ -96,7 +130,11 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
       await ReceiptStorage.trashDir(),
     );
     _sort(files);
-    if (mounted) setState(() => _trash = files);
+    if (!mounted) return;
+    setState(() {
+      _trash = files;
+      if (_trash.isEmpty) _inTrash = false;
+    });
   }
 
   Future<void> _reloadSaved() async {
@@ -186,6 +224,106 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
 
   List<File> get _selectedFiles =>
       _current.where((f) => _selectedPaths.contains(f.path)).toList();
+
+  // ---------- HOLD AND SLIDE TO SELECT ----------
+  // Selects every image from where you held down to where your finger is now,
+  // in reading order. Slide back up and the extra images are unselected.
+
+  void _startDrag(File file, Offset global) {
+    final i = _current.indexWhere((f) => f.path == file.path);
+    if (i < 0) return;
+
+    HapticFeedback.mediumImpact();
+
+    _anchorIndex = i;
+    _baseSelection = Set<String>.from(_selectedPaths);
+    _dragPos = global;
+
+    setState(() => _selectedPaths.add(file.path));
+    _startAutoScroll();
+  }
+
+  void _dragMove(Offset global) {
+    _dragPos = global;
+    final index = _indexAt(global);
+    if (index != null) _applyRange(index);
+  }
+
+  void _endDrag() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    _dragPos = null;
+    _anchorIndex = null;
+  }
+
+  void _applyRange(int currentIndex) {
+    final anchor = _anchorIndex;
+    if (anchor == null) return;
+
+    final lo = math.min(anchor, currentIndex);
+    final hi = math.max(anchor, currentIndex);
+
+    final next = Set<String>.from(_baseSelection);
+    for (int i = lo; i <= hi && i < _current.length; i++) {
+      next.add(_current[i].path);
+    }
+
+    if (next.length == _selectedPaths.length &&
+        next.containsAll(_selectedPaths)) {
+      return;
+    }
+
+    setState(() {
+      _selectedPaths
+        ..clear()
+        ..addAll(next);
+    });
+  }
+
+  int? _indexAt(Offset global) {
+    for (int i = 0; i < _current.length; i++) {
+      final box =
+          _cellKeys[_current[i].path]?.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.attached) continue;
+
+      final local = box.globalToLocal(global);
+      if ((Offset.zero & box.size).inflate(3).contains(local)) return i;
+    }
+    return null;
+  }
+
+  void _startAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+      final pos = _dragPos;
+      if (pos == null || !_scroll.hasClients) return;
+
+      final box = _listKey.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.attached) return;
+
+      final top = box.localToGlobal(Offset.zero).dy;
+      final bottom = top + box.size.height;
+      const zone = 110.0;
+
+      double delta = 0;
+      if (pos.dy < top + zone) {
+        delta = -((top + zone - pos.dy) / zone) * 18;
+      } else if (pos.dy > bottom - zone) {
+        delta = ((pos.dy - (bottom - zone)) / zone) * 18;
+      }
+
+      if (delta == 0) return;
+
+      final target = (_scroll.offset + delta).clamp(
+        0.0,
+        _scroll.position.maxScrollExtent,
+      );
+      _scroll.jumpTo(target);
+
+      final index = _indexAt(pos);
+      if (index != null) _applyRange(index);
+    });
+  }
 
   // ---------- CALCULATE ----------
 
@@ -290,14 +428,13 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
 
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder:
-            (context) => ReceiptViewerScreen(
-              files: dayFiles,
-              initialIndex: initialIndex < 0 ? 0 : initialIndex,
-              isTrash: _inTrash,
-              onShare: _inTrash ? null : (file) => _shareFiles([file]),
-            ),
+      _fadeRoute(
+        ReceiptViewerScreen(
+          files: dayFiles,
+          initialIndex: initialIndex < 0 ? 0 : initialIndex,
+          isTrash: _inTrash,
+          onShare: _inTrash ? null : (file) => _shareFiles([file]),
+        ),
       ),
     );
 
@@ -462,20 +599,22 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+      padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
+      // 3 per row. Change to 2 for even bigger images.
+      // childAspectRatio 1 = width and height are the same (square).
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
-        childAspectRatio: 0.72,
+        crossAxisCount: 3,
+        crossAxisSpacing: 4,
+        mainAxisSpacing: 4,
+        childAspectRatio: 1,
       ),
       itemCount: files.length,
       itemBuilder: (context, index) {
         final file = files[index];
         final selected = _selectedPaths.contains(file.path);
+        final cellKey = _cellKeys.putIfAbsent(file.path, () => GlobalKey());
 
-        return InkWell(
-          onLongPress: () => _toggleSelection(file),
+        return GestureDetector(
           onTap: () {
             if (_isSelecting) {
               _toggleSelection(file);
@@ -483,55 +622,85 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
               _openReceipt(file, files);
             }
           },
-          child: Card(
-            color: Colors.white,
-            clipBehavior: Clip.antiAlias,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Column(
-                  children: [
-                    Expanded(
-                      child: Image.file(
+          // Hold to start selecting, then slide down or up.
+          onLongPressStart: (d) => _startDrag(file, d.globalPosition),
+          onLongPressMoveUpdate: (d) => _dragMove(d.globalPosition),
+          onLongPressEnd: (_) => _endDrag(),
+          onLongPressCancel: _endDrag,
+          child: Container(
+            key: cellKey,
+            child: AnimatedScale(
+              scale: selected ? 0.92 : 1.0,
+              duration: const Duration(milliseconds: 150),
+              curve: Curves.easeOut,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  color: Colors.white,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // Full width from the top, so Num / FR / SR are visible.
+                      Image.file(
                         file,
-                        width: double.infinity,
-                        fit: BoxFit.contain,
+                        fit: BoxFit.fitWidth,
+                        alignment: Alignment.topCenter,
+                        cacheWidth: 600,
                         errorBuilder:
                             (_, _, _) => const Icon(Icons.broken_image),
                       ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(6),
-                      child: Text(
-                        _formatReceiptTime(file),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
+
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          color: Colors.black54,
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Text(
+                            _formatReceiptTime(file),
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                if (selected)
-                  Container(color: Colors.blue.withValues(alpha: 0.22)),
-                Positioned(
-                  top: 6,
-                  right: 6,
-                  child: AnimatedOpacity(
-                    opacity: _isSelecting ? 1 : 0,
-                    duration: const Duration(milliseconds: 150),
-                    child:
-                        _isSelecting
-                            ? Icon(
-                              selected
-                                  ? Icons.check_circle
-                                  : Icons.radio_button_unchecked,
-                              color: selected ? Colors.blue : Colors.grey,
-                              size: 28,
-                            )
-                            : const SizedBox.shrink(),
+
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: AnimatedOpacity(
+                            opacity: selected ? 1 : 0,
+                            duration: const Duration(milliseconds: 150),
+                            child: Container(
+                              color: Colors.blue.withValues(alpha: 0.3),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      Positioned(
+                        top: 4,
+                        right: 4,
+                        child: AnimatedOpacity(
+                          opacity: _isSelecting ? 1 : 0,
+                          duration: const Duration(milliseconds: 150),
+                          child: Icon(
+                            selected
+                                ? Icons.check_circle
+                                : Icons.radio_button_unchecked,
+                            color: selected ? Colors.blue : Colors.white,
+                            size: 22,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
           ),
         );
@@ -545,31 +714,35 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 4, 4),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+        // Fixed height, so the layout does not jump when selecting starts.
+        SizedBox(
+          height: 48,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 4, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
-              ),
-              if (_isSelecting)
-                TextButton.icon(
-                  onPressed: () => _toggleSectionSelection(files),
-                  icon: Icon(
-                    allSelected
-                        ? Icons.check_circle
-                        : Icons.radio_button_unchecked,
-                    size: 20,
+                if (_isSelecting)
+                  TextButton.icon(
+                    onPressed: () => _toggleSectionSelection(files),
+                    icon: Icon(
+                      allSelected
+                          ? Icons.check_circle
+                          : Icons.radio_button_unchecked,
+                      size: 20,
+                    ),
+                    label: Text(allSelected ? 'Deselect all' : 'Select all'),
                   ),
-                  label: Text(allSelected ? 'Deselect all' : 'Select all'),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
         _buildReceiptGrid(files),
@@ -647,38 +820,6 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     );
   }
 
-  Widget _buildTabBar() {
-    return NavigationBar(
-      selectedIndex: _inTrash ? 1 : 0,
-      onDestinationSelected: (index) {
-        setState(() {
-          _inTrash = index == 1;
-          _selectedPaths.clear();
-        });
-      },
-      destinations: [
-        const NavigationDestination(
-          icon: Icon(Icons.photo_library_outlined),
-          selectedIcon: Icon(Icons.photo_library),
-          label: 'Saved',
-        ),
-        NavigationDestination(
-          icon: Badge(
-            isLabelVisible: _trash.isNotEmpty,
-            label: Text('${_trash.length}'),
-            child: const Icon(Icons.delete_outline),
-          ),
-          selectedIcon: Badge(
-            isLabelVisible: _trash.isNotEmpty,
-            label: Text('${_trash.length}'),
-            child: const Icon(Icons.delete),
-          ),
-          label: 'Trash',
-        ),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final groups = _groupReceipts();
@@ -699,50 +840,100 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
 
     orderedTitles.addAll(olderTitles);
 
-    return Scaffold(
-      appBar: AppBar(
-        leading:
-            _isSelecting
-                ? IconButton(
-                  onPressed: () => setState(() => _selectedPaths.clear()),
-                  icon: const Icon(Icons.close),
-                )
-                : null,
-        title: Text(
-          _isSelecting
-              ? '${_selectedPaths.length} selected'
-              : _inTrash
-              ? 'Trash (${_trash.length})'
-              : 'Tokens (${_receipts.length})',
-        ),
-        actions: [
-          if (_isSelecting)
+    Widget title;
+    if (_isSelecting) {
+      title = Text('${_selectedPaths.length} selected');
+    } else if (_inTrash) {
+      title = Text('Trash (${_trash.length})');
+    } else {
+      title = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('Tokens (${_receipts.length})'),
+          if (_trash.isNotEmpty)
             IconButton(
-              tooltip:
-                  _isEverythingSelected ? 'Deselect all' : 'Select everything',
-              icon: Icon(
-                _isEverythingSelected ? Icons.deselect : Icons.select_all,
-              ),
-              onPressed: _toggleSelectEverything,
+              tooltip: 'Trash',
+              icon: Icon(Icons.delete, color: Colors.red.shade700),
+              onPressed:
+                  () => setState(() {
+                    _inTrash = true;
+                    _selectedPaths.clear();
+                  }),
             ),
         ],
-      ),
-      body:
-          _current.isEmpty
-              ? Center(
-                child: Text(
-                  _inTrash ? 'Trash is empty' : 'No images saved yet',
-                  style: const TextStyle(fontSize: 16, color: Colors.grey),
+      );
+    }
+
+    Widget? leading;
+    if (_isSelecting) {
+      leading = IconButton(
+        onPressed: () => setState(() => _selectedPaths.clear()),
+        icon: const Icon(Icons.close),
+      );
+    } else if (_inTrash) {
+      leading = IconButton(
+        tooltip: 'Back to tokens',
+        onPressed: () => setState(() => _inTrash = false),
+        icon: const Icon(Icons.arrow_back),
+      );
+    }
+
+    return PopScope(
+      canPop: !_inTrash,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _inTrash) {
+          setState(() {
+            _inTrash = false;
+            _selectedPaths.clear();
+          });
+        }
+      },
+      child: Scaffold(
+        backgroundColor: _inTrash ? const Color(0xFFFDECEC) : null,
+        appBar: AppBar(
+          backgroundColor: _inTrash ? Colors.red.shade700 : null,
+          foregroundColor: _inTrash ? Colors.white : null,
+          leading: leading,
+          title: title,
+          actions: [
+            if (_isSelecting)
+              IconButton(
+                tooltip:
+                    _isEverythingSelected
+                        ? 'Deselect all'
+                        : 'Select everything',
+                icon: Icon(
+                  _isEverythingSelected ? Icons.deselect : Icons.select_all,
                 ),
-              )
-              : ListView(
-                children: [
-                  for (final title in orderedTitles)
-                    _buildDateSection(title, groups[title]!),
-                  const SizedBox(height: 8),
-                ],
+                onPressed: _toggleSelectEverything,
               ),
-      bottomNavigationBar: _isSelecting ? _buildSelectionBar() : _buildTabBar(),
+          ],
+        ),
+        body:
+            _current.isEmpty
+                ? Center(
+                  child: Text(
+                    _inTrash ? 'Trash is empty' : 'No images saved yet',
+                    style: const TextStyle(fontSize: 16, color: Colors.grey),
+                  ),
+                )
+                : ListView(
+                  key: _listKey,
+                  controller: _scroll,
+                  children: [
+                    for (final t in orderedTitles)
+                      _buildDateSection(t, groups[t]!),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+        // The bar slides in and out smoothly.
+        bottomNavigationBar: AnimatedSize(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          alignment: Alignment.topCenter,
+          child: _isSelecting ? _buildSelectionBar() : const SizedBox.shrink(),
+        ),
+      ),
     );
   }
 }
@@ -766,11 +957,25 @@ class ReceiptViewerScreen extends StatefulWidget {
 }
 
 class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
+  static const double _panelHeight = 214;
+
   late final PageController _pageController;
   late final List<File> _files;
   late final List<PhotoViewScaleStateController> _scaleControllers;
+  final ScrollController _thumbScroll = ScrollController();
 
   late int _currentIndex;
+
+  // Slide-up-to-share state.
+  Offset? _downPos;
+  bool _multiTouch = false;
+  bool _verticalLocked = false;
+  int _pointers = 0;
+  double _dragY = 0;
+  bool _dragging = false;
+
+  bool _panelOpen = false;
+  final Set<String> _shareSel = {};
 
   @override
   void initState() {
@@ -789,12 +994,152 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
   @override
   void dispose() {
     _pageController.dispose();
+    _thumbScroll.dispose();
 
     for (final controller in _scaleControllers) {
       controller.dispose();
     }
 
     super.dispose();
+  }
+
+  bool get _isZoomed =>
+      _files.isNotEmpty &&
+      _scaleControllers[_currentIndex].scaleState !=
+          PhotoViewScaleState.initial;
+
+  void _onPointerDown(PointerDownEvent e) {
+    _pointers++;
+    if (_pointers == 1) {
+      _downPos = e.position;
+      _multiTouch = false;
+      _verticalLocked = false;
+    } else {
+      _multiTouch = true; // pinch zoom
+    }
+  }
+
+  void _onPointerMove(PointerMoveEvent e) {
+    if (widget.onShare == null ||
+        _panelOpen ||
+        _pointers != 1 ||
+        _multiTouch ||
+        _downPos == null ||
+        _isZoomed) {
+      return;
+    }
+
+    final d = e.position - _downPos!;
+
+    if (!_verticalLocked) {
+      if (d.dy < -14 && d.dy.abs() > d.dx.abs() * 2) {
+        _verticalLocked = true;
+      } else {
+        return;
+      }
+    }
+
+    // The image follows the finger a little.
+    setState(() {
+      _dragging = true;
+      _dragY = (d.dy * 0.6).clamp(-160.0, 0.0);
+    });
+  }
+
+  void _onPointerUp(PointerUpEvent e) {
+    _pointers = (_pointers - 1).clamp(0, 10);
+    if (_pointers != 0) return;
+
+    final wasLocked = _verticalLocked;
+    final d = _downPos == null ? Offset.zero : e.position - _downPos!;
+    _verticalLocked = false;
+    _downPos = null;
+
+    if (!wasLocked || _multiTouch) {
+      if (_dragY != 0 || _dragging) {
+        setState(() {
+          _dragging = false;
+          _dragY = 0;
+        });
+      }
+      return;
+    }
+
+    setState(() {
+      _dragging = false;
+      _dragY = 0;
+    });
+
+    if (d.dy < -100) _openPanel();
+  }
+
+  void _onPointerCancel(PointerCancelEvent e) {
+    _pointers = (_pointers - 1).clamp(0, 10);
+    _downPos = null;
+    _verticalLocked = false;
+    if (_dragY != 0 || _dragging) {
+      setState(() {
+        _dragging = false;
+        _dragY = 0;
+      });
+    }
+  }
+
+  void _openPanel() {
+    if (_files.isEmpty) return;
+
+    _shareSel
+      ..clear()
+      ..add(_files[_currentIndex].path);
+
+    setState(() => _panelOpen = true);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_thumbScroll.hasClients) return;
+      final target = (_currentIndex * 100.0 - 100).clamp(
+        0.0,
+        _thumbScroll.position.maxScrollExtent,
+      );
+      _thumbScroll.animateTo(
+        target,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  void _closePanel() => setState(() => _panelOpen = false);
+
+  void _toggleShareSel(File file) {
+    setState(() {
+      if (!_shareSel.remove(file.path)) _shareSel.add(file.path);
+    });
+  }
+
+  int get _shareCount => _files.where((f) => _shareSel.contains(f.path)).length;
+
+  Future<void> _shareSelected() async {
+    final files = _files.where((f) => _shareSel.contains(f.path)).toList();
+    if (files.isEmpty) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+
+    try {
+      await ShareHelper.shareFiles(
+        files,
+        onNotice: (m) {
+          messenger
+            ..hideCurrentSnackBar()
+            ..showSnackBar(SnackBar(content: Text(m)));
+        },
+      );
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Unable to share receipts: $e')),
+      );
+    }
+
+    if (mounted) setState(() => _panelOpen = false);
   }
 
   void _toggleZoom() {
@@ -927,87 +1272,266 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
     );
   }
 
+  Widget _buildThumb(int index) {
+    final file = _files[index];
+    final selected = _shareSel.contains(file.path);
+    final isCurrent = index == _currentIndex;
+
+    return GestureDetector(
+      onTap: () => _toggleShareSel(file),
+      child: AnimatedScale(
+        scale: selected ? 0.94 : 1.0,
+        duration: const Duration(milliseconds: 150),
+        child: Container(
+          width: 92,
+          height: 92,
+          margin: const EdgeInsets.only(right: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isCurrent ? Colors.blue : Colors.grey.shade300,
+              width: isCurrent ? 2 : 1,
+            ),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Container(color: Colors.white),
+                Image.file(
+                  file,
+                  fit: BoxFit.fitWidth,
+                  alignment: Alignment.topCenter,
+                  cacheWidth: 300,
+                  errorBuilder: (_, _, _) => const Icon(Icons.broken_image),
+                ),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedOpacity(
+                      opacity: selected ? 1 : 0,
+                      duration: const Duration(milliseconds: 150),
+                      child: Container(
+                        color: Colors.blue.withValues(alpha: 0.3),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 3,
+                  right: 3,
+                  child: Icon(
+                    selected
+                        ? Icons.check_circle
+                        : Icons.radio_button_unchecked,
+                    color: selected ? Colors.blue : Colors.white,
+                    size: 20,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSharePanel() {
+    final allSelected = _shareCount == _files.length;
+
+    return Material(
+      elevation: 12,
+      color: Theme.of(context).colorScheme.surface,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+        child: Column(
+          children: [
+            SizedBox(
+              height: 44,
+              child: Row(
+                children: [
+                  Text(
+                    '$_shareCount selected',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed:
+                        () => setState(() {
+                          if (allSelected) {
+                            _shareSel.clear();
+                          } else {
+                            _shareSel.addAll(_files.map((f) => f.path));
+                          }
+                        }),
+                    child: Text(allSelected ? 'Clear' : 'Select all'),
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    icon: const Icon(Icons.keyboard_arrow_down),
+                    onPressed: _closePanel,
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 94,
+              child: ListView.builder(
+                controller: _thumbScroll,
+                scrollDirection: Axis.horizontal,
+                itemCount: _files.length,
+                itemBuilder: (context, i) => _buildThumb(i),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: ElevatedButton.icon(
+                onPressed: _shareCount == 0 ? null : _shareSelected,
+                icon: const Icon(Icons.share),
+                label: Text('Share ($_shareCount)'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF25D366),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          '${widget.isTrash ? 'Trash' : 'Token'} '
-          '${_currentIndex + 1}/${_files.length}',
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'Toggle zoom',
-            icon: const Icon(Icons.zoom_in),
-            onPressed: _toggleZoom,
+    return PopScope(
+      canPop: !_panelOpen,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _panelOpen) _closePanel();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            '${widget.isTrash ? 'Trash' : 'Token'} '
+            '${_currentIndex + 1}/${_files.length}',
           ),
-        ],
-      ),
-      body: PhotoViewGallery.builder(
-        itemCount: _files.length,
-        pageController: _pageController,
-        gaplessPlayback: true,
-        backgroundDecoration: BoxDecoration(
-          color: Theme.of(context).scaffoldBackgroundColor,
+          actions: [
+            IconButton(
+              tooltip: 'Toggle zoom',
+              icon: const Icon(Icons.zoom_in),
+              onPressed: _toggleZoom,
+            ),
+          ],
         ),
-        scrollPhysics: const PageScrollPhysics(),
-        onPageChanged: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
-        builder: (context, index) {
-          return PhotoViewGalleryPageOptions(
-            imageProvider: FileImage(_files[index]),
-            initialScale: PhotoViewComputedScale.contained,
-            minScale: PhotoViewComputedScale.contained,
-            maxScale: PhotoViewComputedScale.covered * 5,
-            scaleStateController: _scaleControllers[index],
-            errorBuilder: (context, error, stackTrace) {
-              return const Center(child: Icon(Icons.broken_image, size: 60));
-            },
-          );
-        },
-      ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: Row(
-            children:
-                widget.isTrash
-                    ? [
-                      _bottomButton(
-                        onPressed: _restore,
-                        icon: Icons.restore,
-                        label: 'Restore',
-                        color: Colors.blue,
-                      ),
-                      const SizedBox(width: 10),
-                      _bottomButton(
-                        onPressed: _deleteForever,
-                        icon: Icons.delete_forever,
-                        label: 'Delete forever',
-                        color: Colors.red,
-                      ),
-                    ]
-                    : [
-                      if (widget.onShare != null) ...[
+        body: Stack(
+          children: [
+            // The image moves up when the share panel opens.
+            AnimatedPadding(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOutCubic,
+              padding: EdgeInsets.only(bottom: _panelOpen ? _panelHeight : 0),
+              child: Listener(
+                onPointerDown: _onPointerDown,
+                onPointerMove: _onPointerMove,
+                onPointerUp: _onPointerUp,
+                onPointerCancel: _onPointerCancel,
+                child: AnimatedContainer(
+                  duration:
+                      _dragging
+                          ? Duration.zero
+                          : const Duration(milliseconds: 250),
+                  curve: Curves.easeOut,
+                  transform: Matrix4.translationValues(0, _dragY, 0),
+                  child: PhotoViewGallery.builder(
+                    itemCount: _files.length,
+                    pageController: _pageController,
+                    gaplessPlayback: true,
+                    backgroundDecoration: BoxDecoration(
+                      color: Theme.of(context).scaffoldBackgroundColor,
+                    ),
+                    scrollPhysics: const PageScrollPhysics(),
+                    onPageChanged: (index) {
+                      setState(() {
+                        _currentIndex = index;
+                      });
+                    },
+                    builder: (context, index) {
+                      return PhotoViewGalleryPageOptions(
+                        imageProvider: FileImage(_files[index]),
+                        initialScale: PhotoViewComputedScale.contained,
+                        minScale: PhotoViewComputedScale.contained,
+                        maxScale: PhotoViewComputedScale.covered * 5,
+                        scaleStateController: _scaleControllers[index],
+                        errorBuilder: (context, error, stackTrace) {
+                          return const Center(
+                            child: Icon(Icons.broken_image, size: 60),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+
+            // Share panel slides up from the bottom.
+            if (widget.onShare != null)
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOutCubic,
+                left: 0,
+                right: 0,
+                bottom: _panelOpen ? 0 : -(_panelHeight + 30),
+                height: _panelHeight,
+                child: _buildSharePanel(),
+              ),
+          ],
+        ),
+        bottomNavigationBar: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Row(
+              children:
+                  widget.isTrash
+                      ? [
                         _bottomButton(
-                          onPressed:
-                              () => widget.onShare!(_files[_currentIndex]),
-                          icon: Icons.share,
-                          label: 'Share to WhatsApp',
-                          color: const Color(0xFF25D366),
+                          onPressed: _restore,
+                          icon: Icons.restore,
+                          label: 'Restore',
+                          color: Colors.blue,
                         ),
                         const SizedBox(width: 10),
+                        _bottomButton(
+                          onPressed: _deleteForever,
+                          icon: Icons.delete_forever,
+                          label: 'Delete forever',
+                          color: Colors.red,
+                        ),
+                      ]
+                      : [
+                        _bottomButton(
+                          onPressed: _moveToTrash,
+                          icon: Icons.delete,
+                          label: 'Delete',
+                          color: Colors.red,
+                        ),
+                        if (widget.onShare != null) ...[
+                          const SizedBox(width: 10),
+                          _bottomButton(
+                            onPressed:
+                                () => widget.onShare!(_files[_currentIndex]),
+                            icon: Icons.share,
+                            label: 'Share',
+                            color: const Color(0xFF25D366),
+                          ),
+                        ],
                       ],
-                      _bottomButton(
-                        onPressed: _moveToTrash,
-                        icon: Icons.delete,
-                        label: 'Delete',
-                        color: Colors.red,
-                      ),
-                    ],
+            ),
           ),
         ),
       ),
@@ -1051,6 +1575,37 @@ class ReceiptTotals {
   }
 }
 
+/// Caption for each image: its number within its day (1 = first saved that day).
+class ReceiptCaption {
+  static Future<List<String>> forFiles(List<File> files) async {
+    final cache = <String, List<File>>{};
+    final result = <String>[];
+
+    for (final file in files) {
+      final all =
+          cache[file.parent.path] ??= await ReceiptStorage.listJpgs(
+            file.parent,
+          );
+      final date = file.lastModifiedSync();
+
+      final sameDay =
+          all.where((f) {
+              final m = f.lastModifiedSync();
+              return m.year == date.year &&
+                  m.month == date.month &&
+                  m.day == date.day;
+            }).toList()
+            ..sort(
+              (a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()),
+            );
+
+      final i = sameDay.indexWhere((f) => f.path == file.path);
+      result.add('${i < 0 ? 1 : i + 1}');
+    }
+    return result;
+  }
+}
+
 class ShareHelper {
   static const MethodChannel _channel = MethodChannel('token_taker/whatsapp');
   static const String modeKey = 'share_mode';
@@ -1064,10 +1619,11 @@ class ShareHelper {
     return digits;
   }
 
-  static Future<void> _normalShare(List<File> files) {
+  static Future<void> _normalShare(List<File> files, List<String> captions) {
     return SharePlus.instance.share(
       ShareParams(
         files: files.map((f) => XFile(f.path, mimeType: 'image/jpeg')).toList(),
+        text: captions.isEmpty ? null : captions.join('\n'),
         sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
       ),
     );
@@ -1080,17 +1636,19 @@ class ShareHelper {
     final prefs = await SharedPreferences.getInstance();
     final mode = prefs.getInt(modeKey) ?? 2;
     final number = cleanNumber(prefs.getString(numberKey) ?? '');
+    final captions = await ReceiptCaption.forFiles(files);
 
     if (mode == 0 || mode == 1) {
       if (mode == 0 && number.isEmpty) {
         onNotice?.call('No WhatsApp number saved. Add one in Settings.');
-        await _normalShare(files);
+        await _normalShare(files, captions);
         return;
       }
 
       try {
         final ok = await _channel.invokeMethod<bool>('share', {
           'paths': files.map((f) => f.path).toList(),
+          'texts': captions,
           'phone': mode == 0 ? number : '',
         });
 
@@ -1103,6 +1661,6 @@ class ShareHelper {
       }
     }
 
-    await _normalShare(files);
+    await _normalShare(files, captions);
   }
 }

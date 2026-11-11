@@ -20,8 +20,9 @@ class MainActivity : FlutterActivity() {
                 if (call.method == "share") {
                     val paths = call.argument<List<String>>("paths") ?: emptyList()
                     val phone = call.argument<String>("phone") ?: ""
+                    val texts = call.argument<List<String>>("texts") ?: emptyList()
                     try {
-                        result.success(shareToWhatsApp(paths, phone))
+                        result.success(shareToWhatsApp(paths, phone, texts))
                     } catch (e: Exception) {
                         result.error("SHARE_FAILED", e.message, null)
                     }
@@ -40,7 +41,11 @@ class MainActivity : FlutterActivity() {
         }
 
     /** Returns false if WhatsApp is not installed. */
-    private fun shareToWhatsApp(paths: List<String>, phone: String): Boolean {
+    private fun shareToWhatsApp(
+        paths: List<String>,
+        phone: String,
+        texts: List<String>
+    ): Boolean {
         val pkg = when {
             isInstalled("com.whatsapp") -> "com.whatsapp"
             isInstalled("com.whatsapp.w4b") -> "com.whatsapp.w4b"
@@ -70,6 +75,18 @@ class MainActivity : FlutterActivity() {
         intent.type = "image/jpeg"
         intent.setPackage(pkg)
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+
+        // Write the image number as the caption in WhatsApp.
+        if (texts.isNotEmpty()) {
+            if (uris.size == 1) {
+                intent.putExtra(Intent.EXTRA_TEXT, texts[0])
+            } else {
+                intent.putCharSequenceArrayListExtra(
+                    Intent.EXTRA_TEXT,
+                    ArrayList<CharSequence>(texts)
+                )
+            }
+        }
 
         // Opens that chat directly. Without it, WhatsApp shows its contact list.
         if (phone.isNotEmpty()) {
