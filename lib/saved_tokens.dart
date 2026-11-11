@@ -125,6 +125,49 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     if (mounted) setState(() => _totals = totals);
   }
 
+  Future<void> _deleteSelectedForever() async {
+    final files = _selectedFiles;
+    if (files.isEmpty) return;
+
+    final ok = await _confirm(
+      title: 'Delete permanently?',
+      message:
+          'Delete ${_countText(files.length)} forever? '
+          'This action cannot be undone.',
+      action: 'Delete forever',
+    );
+
+    if (!ok || !mounted) return;
+
+    var deleted = 0;
+    var failed = 0;
+
+    for (final file in files) {
+      try {
+        await ReceiptStorage.deleteForever(file);
+        deleted++;
+      } catch (_) {
+        failed++;
+      }
+    }
+
+    if (!mounted) return;
+
+    await _loadTrash();
+
+    if (!mounted) return;
+
+    setState(() {
+      _selectedPaths.clear();
+    });
+
+    _showSnack(
+      failed == 0
+          ? '${_countText(deleted)} deleted permanently.'
+          : '$deleted deleted permanently. $failed could not be deleted.',
+    );
+  }
+
   Future<void> _loadTrash() async {
     final files = await ReceiptStorage.listJpgs(
       await ReceiptStorage.trashDir(),
@@ -753,6 +796,12 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
                       color: Colors.blue,
                     ),
                     const SizedBox(width: 8),
+                    _actionButton(
+                      onPressed: _deleteSelectedForever,
+                      icon: Icons.delete_forever,
+                      label: 'Delete forever',
+                      color: Colors.red,
+                    ),
                   ]
                   : [
                     const SizedBox(width: 8),
