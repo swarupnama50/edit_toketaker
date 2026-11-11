@@ -2070,16 +2070,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     if (mounted) {
       await _showFirstInstallGuide();
     }
-
-    // Focus the first empty Num box, as if it was tapped.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || numFocusNodes.isEmpty) return;
-
-      var target = numControllers.indexWhere((c) => c.text.trim().isEmpty);
-      if (target == -1) target = numControllers.length - 1;
-
-      numFocusNodes[target].requestFocus();
-    });
   }
 
   Future<void> _saveMode(bool value) async {
@@ -2380,6 +2370,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     required InputDecoration decoration,
     required double width,
     required bool enabled,
+    bool highlight = false,
     required TextInputType keyboardType,
     List<TextInputFormatter>? inputFormatters,
     TextAlign textAlign = TextAlign.center,
@@ -2448,7 +2439,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(9),
-              borderSide: const BorderSide(color: _borderColor, width: 1),
+              borderSide: BorderSide(
+                color: highlight ? _primaryColor : _borderColor,
+                width: highlight ? 1.7 : 1,
+              ),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(9),
@@ -2531,15 +2525,19 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     final appDir = await getApplicationDocumentsDirectory();
     final directory = Directory('${appDir.path}/saved_receipts');
 
-    if (!await directory.exists()) return;
     if (!mounted) return;
 
+    // The folder may not exist yet. Open the screen anyway with an empty list.
     final receipts =
-        directory
-            .listSync()
-            .whereType<File>()
-            .where((file) => file.path.toLowerCase().endsWith('.jpg'))
-            .toList();
+        await directory.exists()
+            ? directory
+                .listSync()
+                .whereType<File>()
+                .where((file) => file.path.toLowerCase().endsWith('.jpg'))
+                .toList()
+            : <File>[];
+
+    if (!mounted) return;
 
     await Navigator.push(
       context,
@@ -3040,6 +3038,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   Widget buildRow(int index) {
     const double gap = 3;
+    // The first blank Num box is highlighted, so it is clear where to type.
+    final firstEmptyIndex = numControllers.indexWhere(
+      (c) => c.text.trim().isEmpty,
+    );
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -3053,6 +3055,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
               fieldType: 'num',
               width: double.infinity,
               enabled: isNumEnabled(index),
+              highlight: index == firstEmptyIndex,
               keyboardType: TextInputType.text,
               inputFormatters: [
                 LengthLimitingTextInputFormatter(4),
