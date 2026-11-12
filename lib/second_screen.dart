@@ -32,15 +32,15 @@ class _SecondScreenState extends State<SecondScreen> {
   Color _currentReceiptBackground = Colors.white;
   Color _receiptBackground(int index) {
     const colors = [
-      Color(0xFFE3F2FD), // Light blue
-      Color(0xFFE8F5E9), // Light green
-      Color(0xFFFFF9C4), // Light yellow
-      Color(0xFFEDE7F6), // Light purple
-      Color(0xFFE0F7FA), // Light cyan
-      Color(0xFFFFE0B2), // Light orange
-      Color(0xFFFCE4EC), // Light pink
-      Color(0xFFE8EAF6), // Light indigo
-      Color(0xFFF1F8E9), // Light lime
+    Color(0xFFFFFFFF), // White (lightest)
+    Color(0xFFFFF59D), // Strong yellow
+    Color(0xFFA5D6A7), // Medium green
+    Color(0xFF90CAF9), // Medium blue
+    Color(0xFFFFCC80), // Medium orange
+    Color(0xFFCE93D8), // Medium purple
+    Color(0xFFEF9A9A), // Medium red/pink
+    Color(0xFFB0BEC5), // Medium grey
+    Color(0xFF80DEEA), // Medium cyan
     ];
 
     return colors[index % colors.length];

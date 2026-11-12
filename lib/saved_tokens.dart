@@ -97,6 +97,12 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
 
   List<File> get _current => _inTrash ? _trash : _receipts;
   bool get _isSelecting => _selectedPaths.isNotEmpty;
+  int get _todayCount {
+    final today = _dateOnly(DateTime.now());
+    return _receipts
+        .where((f) => _dateOnly(f.lastModifiedSync()) == today)
+        .length;
+  }
 
   @override
   void initState() {
@@ -657,7 +663,28 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
                         errorBuilder:
                             (_, _, _) => const Icon(Icons.broken_image),
                       ),
-
+                      Positioned(
+                        top: 2,
+                        left: 2,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '${files.length - index}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
                       Positioned(
                         left: 0,
                         right: 0,
@@ -868,7 +895,7 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
       title = Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('Tokens (${_receipts.length})'),
+          Text('Tokens ($_todayCount)'),
           if (_trash.isNotEmpty)
             IconButton(
               tooltip: 'Trash',

@@ -489,7 +489,7 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
           appBar: AppBar(
             title: Text(
               '${widget.isTrash ? 'Trash' : 'Token'} '
-              '${_currentIndex + 1}/${_files.length}',
+              '${_files.length - _currentIndex}/${_files.length}',
             ),
             actions: [
               IconButton(
