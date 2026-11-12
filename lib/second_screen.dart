@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
+import 'package:token_taker/receipt_viewer_screen.dart';
+import 'package:token_taker/receipttotal_calculate_sharehelper.dart';
 import 'package:token_taker/saved_tokens.dart';
 
 class SecondScreen extends StatefulWidget {

@@ -3,12 +3,10 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
-import 'package:photo_view/photo_view.dart';
-import 'package:photo_view/photo_view_gallery.dart';
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:flutter/services.dart';
+import 'package:token_taker/receipt_viewer_screen.dart';
+import 'package:token_taker/receipttotal_calculate_sharehelper.dart';
 
 /// Smooth fade when opening the viewer.
 Route<T> _fadeRoute<T>(Widget page) {
@@ -609,13 +607,13 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
+      padding: const EdgeInsets.only(bottom: 8),
       // 3 per row. Change to 2 for even bigger images.
       // childAspectRatio 1 = width and height are the same (square).
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 4,
-        mainAxisSpacing: 4,
+        crossAxisCount: 4,
+        crossAxisSpacing: 0,
+        mainAxisSpacing: 0,
         childAspectRatio: 1,
       ),
       itemCount: files.length,
@@ -786,43 +784,54 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
         child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children:
               _inTrash
                   ? [
-                    _actionButton(
-                      onPressed: _restoreSelected,
-                      icon: Icons.restore,
-                      label: 'Restore',
-                      color: Colors.blue,
+                    Expanded(
+                      child: _actionButton(
+                        onPressed: _restoreSelected,
+                        icon: Icons.restore,
+                        label: 'Restore',
+                        color: Colors.blue,
+                      ),
                     ),
                     const SizedBox(width: 8),
-                    _actionButton(
-                      onPressed: _deleteSelectedForever,
-                      icon: Icons.delete_forever,
-                      label: 'Delete forever',
-                      color: Colors.red,
+                    Expanded(
+                      child: _actionButton(
+                        onPressed: _deleteSelectedForever,
+                        icon: Icons.delete_forever,
+                        label: 'Delete forever',
+                        color: Colors.red,
+                      ),
                     ),
                   ]
                   : [
-                    const SizedBox(width: 8),
-                    _actionButton(
-                      onPressed: _showCalculationDialog,
-                      icon: Icons.calculate,
-                      label: 'Calculate',
-                      color: Colors.blue,
+                    Expanded(
+                      child: _actionButton(
+                        onPressed: _moveSelectedToTrash,
+                        icon: Icons.delete,
+                        label: 'Delete',
+                        color: Colors.red,
+                      ),
                     ),
                     const SizedBox(width: 8),
-                    _actionButton(
-                      onPressed: _moveSelectedToTrash,
-                      icon: Icons.delete,
-                      label: 'Delete',
-                      color: Colors.red,
+                    Expanded(
+                      child: _actionButton(
+                        onPressed: _showCalculationDialog,
+                        icon: Icons.calculate,
+                        label: 'Calculate',
+                        color: Colors.blue,
+                      ),
                     ),
-                    _actionButton(
-                      onPressed: () => _shareFiles(_selectedFiles),
-                      icon: Icons.share,
-                      label: 'Share',
-                      color: const Color(0xFF25D366),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _actionButton(
+                        onPressed: () => _shareFiles(_selectedFiles),
+                        icon: Icons.share,
+                        label: 'Share',
+                        color: const Color(0xFF25D366),
+                      ),
                     ),
                   ],
         ),
@@ -945,698 +954,5 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
         ),
       ),
     );
-  }
-}
-
-class ReceiptViewerScreen extends StatefulWidget {
-  final List<File> files;
-  final int initialIndex;
-  final Future<void> Function(File file)? onShare;
-  final bool isTrash;
-
-  const ReceiptViewerScreen({
-    super.key,
-    required this.files,
-    required this.initialIndex,
-    this.onShare,
-    this.isTrash = false,
-  });
-
-  @override
-  State<ReceiptViewerScreen> createState() => _ReceiptViewerScreenState();
-}
-
-class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
-  static const double _panelHeight = 214;
-
-  late final PageController _pageController;
-  late final List<File> _files;
-  late final List<PhotoViewScaleStateController> _scaleControllers;
-
-  late int _currentIndex;
-
-  // Slide-up-to-share state.
-  Offset? _downPos;
-  bool _multiTouch = false;
-  bool _verticalLocked = false;
-  int _pointers = 0;
-  double _dragY = 0;
-  bool _dragging = false;
-
-  bool _panelOpen = false;
-  final Set<String> _shareSel = {};
-
-  @override
-  void initState() {
-    super.initState();
-
-    _files = List<File>.from(widget.files);
-    _currentIndex = widget.initialIndex.clamp(0, _files.length - 1);
-    _pageController = PageController(initialPage: _currentIndex);
-
-    _scaleControllers = List.generate(
-      _files.length,
-      (_) => PhotoViewScaleStateController(),
-    );
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-
-    for (final controller in _scaleControllers) {
-      controller.dispose();
-    }
-
-    super.dispose();
-  }
-
-  bool get _isZoomed =>
-      _files.isNotEmpty &&
-      _scaleControllers[_currentIndex].scaleState !=
-          PhotoViewScaleState.initial;
-
-  void _onPointerDown(PointerDownEvent e) {
-    _pointers++;
-    if (_pointers == 1) {
-      _downPos = e.position;
-      _multiTouch = false;
-      _verticalLocked = false;
-    } else {
-      _multiTouch = true; // pinch zoom
-    }
-  }
-
-  Future<void> _handleShare() async {
-    if (_files.isEmpty) return;
-
-    if (_panelOpen) {
-      await _shareSelected();
-      return;
-    }
-
-    // Without sliding up, share only the current image.
-    final currentFile = _files[_currentIndex];
-
-    try {
-      await ShareHelper.shareFiles([currentFile]);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Unable to share image: $e')));
-    }
-  }
-
-  void _onPointerMove(PointerMoveEvent e) {
-    if (widget.onShare == null ||
-        _pointers != 1 ||
-        _multiTouch ||
-        _downPos == null ||
-        _isZoomed) {
-      return;
-    }
-
-    final d = e.position - _downPos!;
-
-    if (!_verticalLocked) {
-      final isCorrectDirection = _panelOpen ? d.dy > 14 : d.dy < -14;
-
-      if (isCorrectDirection && d.dy.abs() > d.dx.abs() * 2) {
-        _verticalLocked = true;
-      } else {
-        return;
-      }
-    }
-
-    setState(() {
-      _dragging = true;
-
-      // Panel closed: image follows upward.
-      // Panel open: image follows downward.
-      _dragY =
-          _panelOpen
-              ? (d.dy * 0.6).clamp(0.0, 160.0)
-              : (d.dy * 0.6).clamp(-160.0, 0.0);
-    });
-  }
-
-  void _onPointerUp(PointerUpEvent e) {
-    _pointers = (_pointers - 1).clamp(0, 10);
-    if (_pointers != 0) return;
-
-    final wasLocked = _verticalLocked;
-    final wasPanelOpen = _panelOpen;
-
-    final d = _downPos == null ? Offset.zero : e.position - _downPos!;
-
-    _verticalLocked = false;
-    _downPos = null;
-
-    if (!wasLocked || _multiTouch) {
-      if (_dragY != 0 || _dragging) {
-        setState(() {
-          _dragging = false;
-          _dragY = 0;
-        });
-      }
-      return;
-    }
-
-    setState(() {
-      _dragging = false;
-      _dragY = 0;
-    });
-
-    if (wasPanelOpen && d.dy > 100) {
-      _closePanel();
-    } else if (!wasPanelOpen && d.dy < -100) {
-      _openPanel();
-    }
-  }
-
-  void _onPointerCancel(PointerCancelEvent e) {
-    _pointers = (_pointers - 1).clamp(0, 10);
-    _downPos = null;
-    _verticalLocked = false;
-    if (_dragY != 0 || _dragging) {
-      setState(() {
-        _dragging = false;
-        _dragY = 0;
-      });
-    }
-  }
-
-  void _openPanel() {
-    if (_files.isEmpty) return;
-
-    setState(() {
-      _shareSel
-        ..clear()
-        ..add(_files[_currentIndex].path);
-
-      _panelOpen = true;
-    });
-  }
-
-  void _closePanel() => setState(() => _panelOpen = false);
-
-  void _toggleShareSel(File file) {
-    setState(() {
-      if (!_shareSel.remove(file.path)) _shareSel.add(file.path);
-    });
-  }
-
-  int get _shareCount => _files.where((f) => _shareSel.contains(f.path)).length;
-
-  Future<void> _shareSelected() async {
-    final files = _files.where((f) => _shareSel.contains(f.path)).toList();
-    if (files.isEmpty) return;
-
-    final messenger = ScaffoldMessenger.of(context);
-
-    try {
-      await ShareHelper.shareFiles(
-        files,
-        onNotice: (m) {
-          messenger
-            ..hideCurrentSnackBar()
-            ..showSnackBar(SnackBar(content: Text(m)));
-        },
-      );
-    } catch (e) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('Unable to share receipts: $e')),
-      );
-    }
-
-    if (mounted) setState(() => _panelOpen = false);
-  }
-
-  void _toggleCurrentImageSelection() {
-    if (_files.isEmpty) return;
-
-    _toggleShareSel(_files[_currentIndex]);
-  }
-
-  void _toggleZoom() {
-    final controller = _scaleControllers[_currentIndex];
-
-    setState(() {
-      if (controller.scaleState.isScaleStateZooming) {
-        controller.scaleState = PhotoViewScaleState.initial;
-      } else {
-        controller.scaleState = PhotoViewScaleState.zoomedIn;
-      }
-    });
-  }
-
-  /// Removes the current image from this viewer after it was
-  /// moved, restored or deleted.
-  void _removeCurrentFromList(String message) {
-    final index = _currentIndex;
-    final removedController = _scaleControllers.removeAt(index);
-    _files.removeAt(index);
-
-    // Dispose after the gallery has rebuilt without it.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      removedController.dispose();
-    });
-
-    final messenger = ScaffoldMessenger.of(context);
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
-
-    if (_files.isEmpty) {
-      Navigator.pop(context, true);
-      return;
-    }
-
-    final newIndex = index >= _files.length ? _files.length - 1 : index;
-
-    setState(() => _currentIndex = newIndex);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_pageController.hasClients) {
-        _pageController.jumpToPage(newIndex);
-      }
-    });
-  }
-
-  Future<void> _moveToTrash() async {
-    try {
-      await ReceiptStorage.moveToTrash(_files[_currentIndex]);
-      if (!mounted) return;
-      _removeCurrentFromList('Moved to Trash.');
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Could not delete.')));
-    }
-  }
-
-  Future<void> _restore() async {
-    try {
-      await ReceiptStorage.restore(_files[_currentIndex]);
-      if (!mounted) return;
-      _removeCurrentFromList('Restored.');
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Could not restore.')));
-    }
-  }
-
-  Future<void> _deleteForever() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder:
-          (dialogContext) => AlertDialog(
-            title: const Text('Delete permanently?'),
-            content: const Text(
-              'This receipt will be deleted forever. This cannot be undone.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                style: TextButton.styleFrom(foregroundColor: Colors.red),
-                child: const Text('Delete'),
-              ),
-            ],
-          ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    try {
-      await ReceiptStorage.deleteForever(_files[_currentIndex]);
-      if (!mounted) return;
-      _removeCurrentFromList('Deleted permanently.');
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Could not delete.')));
-    }
-  }
-
-  Widget _bottomButton({
-    required VoidCallback onPressed,
-    required IconData icon,
-    required String label,
-    required Color color,
-  }) {
-    return Expanded(
-      child: SizedBox(
-        height: 52,
-        child: ElevatedButton.icon(
-          onPressed: onPressed,
-          icon: Icon(icon),
-          label: Text(label),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: color,
-            foregroundColor: Colors.white,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSharePanel() {
-    return Material(
-      elevation: 12,
-      color: Theme.of(context).colorScheme.surface,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  if (_shareCount == _files.length) {
-                    _shareSel.clear();
-                  } else {
-                    _shareSel.addAll(_files.map((f) => f.path));
-                  }
-                });
-              },
-              child: Text(
-                _shareCount == _files.length ? 'Clear' : 'Select all',
-                style: const TextStyle(fontSize: 14),
-              ),
-            ),
-
-            // Current image selection tick
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _toggleCurrentImageSelection,
-              child: Padding(
-                padding: const EdgeInsets.only(right: 4, top: 8, bottom: 8),
-                child: Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color:
-                        _shareSel.contains(_files[_currentIndex].path)
-                            ? Colors.blue
-                            : Colors.black45,
-                    border: Border.all(color: Colors.white, width: 1.5),
-                  ),
-                  child: Icon(
-                    _shareSel.contains(_files[_currentIndex].path)
-                        ? Icons.check
-                        : Icons.add,
-                    color: Colors.white,
-                    size: 19,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return PopScope(
-      canPop: !_panelOpen,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _panelOpen) _closePanel();
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(
-            '${widget.isTrash ? 'Trash' : 'Token'} '
-            '${_currentIndex + 1}/${_files.length}',
-          ),
-          actions: [
-            IconButton(
-              tooltip: 'Toggle zoom',
-              icon: const Icon(Icons.zoom_in),
-              onPressed: _toggleZoom,
-            ),
-          ],
-        ),
-        body: Stack(
-          children: [
-            // The image moves up when the share panel opens.
-            AnimatedPadding(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOutCubic,
-              padding: EdgeInsets.only(bottom: _panelOpen ? _panelHeight : 0),
-              child: Listener(
-                onPointerDown: _onPointerDown,
-                onPointerMove: _onPointerMove,
-                onPointerUp: _onPointerUp,
-                onPointerCancel: _onPointerCancel,
-                child: AnimatedContainer(
-                  duration:
-                      _dragging
-                          ? Duration.zero
-                          : const Duration(milliseconds: 250),
-                  curve: Curves.easeOut,
-                  transform: Matrix4.translationValues(0, _dragY, 0),
-                  child: Stack(
-                    children: [
-                      PhotoViewGallery.builder(
-                        itemCount: _files.length,
-                        pageController: _pageController,
-                        gaplessPlayback: true,
-                        backgroundDecoration: BoxDecoration(
-                          color: Theme.of(context).scaffoldBackgroundColor,
-                        ),
-                        scrollPhysics: const PageScrollPhysics(),
-                        onPageChanged: (index) {
-                          setState(() {
-                            _currentIndex = index;
-                          });
-                        },
-                        builder: (context, index) {
-                          return PhotoViewGalleryPageOptions(
-                            imageProvider: FileImage(_files[index]),
-                            initialScale: PhotoViewComputedScale.contained,
-                            minScale: PhotoViewComputedScale.contained,
-                            maxScale: PhotoViewComputedScale.covered * 5,
-                            scaleStateController: _scaleControllers[index],
-                            errorBuilder: (context, error, stackTrace) {
-                              return const Center(
-                                child: Icon(Icons.broken_image, size: 60),
-                              );
-                            },
-                          );
-                        },
-                      ),
-
-                      // Tap the image to select or deselect it.
-                      if (_panelOpen)
-                        Positioned.fill(
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.translucent,
-                            onTap: _toggleCurrentImageSelection,
-                          ),
-                        ),
-
-                      // Selection tick at bottom-right.
-                      // Small selection tick at bottom-right.
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-            // Share panel slides up from the bottom.
-            if (widget.onShare != null)
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeOutCubic,
-                left: 0,
-                right: 0,
-                bottom: _panelOpen ? 0 : -(_panelHeight + 30),
-                height: _panelHeight,
-                child: _buildSharePanel(),
-              ),
-          ],
-        ),
-        bottomNavigationBar: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            child: Row(
-              children:
-                  widget.isTrash
-                      ? [
-                        _bottomButton(
-                          onPressed: _restore,
-                          icon: Icons.restore,
-                          label: 'Restore',
-                          color: Colors.blue,
-                        ),
-                        const SizedBox(width: 10),
-                        _bottomButton(
-                          onPressed: _deleteForever,
-                          icon: Icons.delete_forever,
-                          label: 'Delete forever',
-                          color: Colors.red,
-                        ),
-                      ]
-                      : [
-                        _bottomButton(
-                          onPressed: _moveToTrash,
-                          icon: Icons.delete,
-                          label: 'Delete',
-                          color: Colors.red,
-                        ),
-                        if (widget.onShare != null) ...[
-                          const SizedBox(width: 10),
-                          _bottomButton(
-                            onPressed: _handleShare,
-                            icon: Icons.share,
-                            label: 'Share (${_panelOpen ? _shareCount : 1})',
-                            color: const Color(0xFF25D366),
-                          ),
-                        ],
-                      ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Stores the total amount for each saved receipt (fileName -> total).
-class ReceiptTotals {
-  static const String _key = 'receipt_totals';
-
-  static String nameOf(File file) =>
-      file.path.split(Platform.pathSeparator).last;
-
-  static Future<Map<String, int>> loadAll() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_key);
-    if (raw == null) return {};
-    try {
-      final decoded = jsonDecode(raw) as Map<String, dynamic>;
-      return decoded.map((k, v) => MapEntry(k, (v as num).toInt()));
-    } catch (_) {
-      return {};
-    }
-  }
-
-  static Future<void> save(String fileName, int total) async {
-    final prefs = await SharedPreferences.getInstance();
-    final all = await loadAll();
-    all[fileName] = total;
-    await prefs.setString(_key, jsonEncode(all));
-  }
-
-  static Future<void> removeAll(Iterable<String> fileNames) async {
-    final prefs = await SharedPreferences.getInstance();
-    final all = await loadAll();
-    for (final n in fileNames) {
-      all.remove(n);
-    }
-    await prefs.setString(_key, jsonEncode(all));
-  }
-}
-
-/// Caption for each image: its number within its day (1 = first saved that day).
-class ReceiptCaption {
-  static Future<List<String>> forFiles(List<File> files) async {
-    final cache = <String, List<File>>{};
-    final result = <String>[];
-
-    for (final file in files) {
-      final all =
-          cache[file.parent.path] ??= await ReceiptStorage.listJpgs(
-            file.parent,
-          );
-      final date = file.lastModifiedSync();
-
-      final sameDay =
-          all.where((f) {
-              final m = f.lastModifiedSync();
-              return m.year == date.year &&
-                  m.month == date.month &&
-                  m.day == date.day;
-            }).toList()
-            ..sort(
-              (a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()),
-            );
-
-      final i = sameDay.indexWhere((f) => f.path == file.path);
-      result.add('${i < 0 ? 1 : i + 1}');
-    }
-    return result;
-  }
-}
-
-class ShareHelper {
-  static const MethodChannel _channel = MethodChannel('token_taker/whatsapp');
-  static const String modeKey = 'share_mode';
-  static const String numberKey = 'share_whatsapp_number';
-
-  /// Digits only. A 10-digit number gets the India code (91).
-  static String cleanNumber(String raw) {
-    var digits = raw.replaceAll(RegExp(r'\D'), '');
-    if (digits.startsWith('00')) digits = digits.substring(2);
-    if (digits.length == 10) digits = '91$digits';
-    return digits;
-  }
-
-  static Future<void> _normalShare(List<File> files, List<String> captions) {
-    return SharePlus.instance.share(
-      ShareParams(
-        files: files.map((f) => XFile(f.path, mimeType: 'image/jpeg')).toList(),
-        text: captions.isEmpty ? null : captions.join('\n'),
-        sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
-      ),
-    );
-  }
-
-  static Future<void> shareFiles(
-    List<File> files, {
-    void Function(String message)? onNotice,
-  }) async {
-    final prefs = await SharedPreferences.getInstance();
-    final mode = prefs.getInt(modeKey) ?? 2;
-    final number = cleanNumber(prefs.getString(numberKey) ?? '');
-    final captions = await ReceiptCaption.forFiles(files);
-
-    if (mode == 0 || mode == 1) {
-      if (mode == 0 && number.isEmpty) {
-        onNotice?.call('No WhatsApp number saved. Add one in Settings.');
-        await _normalShare(files, captions);
-        return;
-      }
-
-      try {
-        final ok = await _channel.invokeMethod<bool>('share', {
-          'paths': files.map((f) => f.path).toList(),
-          'texts': captions,
-          'phone': mode == 0 ? number : '',
-        });
-
-        if (ok == true) return;
-
-        onNotice?.call('WhatsApp is not installed. Using normal share.');
-      } catch (e) {
-        debugPrint('WhatsApp share failed: $e');
-        onNotice?.call('Could not open WhatsApp ($e). Using normal share.');
-      }
-    }
-
-    await _normalShare(files, captions);
   }
 }
