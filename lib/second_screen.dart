@@ -32,15 +32,15 @@ class _SecondScreenState extends State<SecondScreen> {
   Color _currentReceiptBackground = Colors.white;
   Color _receiptBackground(int index) {
     const colors = [
-    Color(0xFFFFFFFF), // White (lightest)
-    Color(0xFFFFF59D), // Strong yellow
-    Color(0xFFA5D6A7), // Medium green
-    Color(0xFF90CAF9), // Medium blue
-    Color(0xFFFFCC80), // Medium orange
-    Color(0xFFCE93D8), // Medium purple
-    Color(0xFFEF9A9A), // Medium red/pink
-    Color(0xFFB0BEC5), // Medium grey
-    Color(0xFF80DEEA), // Medium cyan
+      Color(0xFFFFFFFF), // White (lightest)
+      Color(0xFFFFF59D), // Strong yellow
+      Color(0xFFA5D6A7), // Medium green
+      Color(0xFF90CAF9), // Medium blue
+      Color(0xFFFFCC80), // Medium orange
+      Color(0xFFCE93D8), // Medium purple
+      Color(0xFFEF9A9A), // Medium red/pink
+      Color(0xFFB0BEC5), // Medium grey
+      Color(0xFF80DEEA), // Medium cyan
     ];
 
     return colors[index % colors.length];
@@ -489,7 +489,7 @@ class _SecondScreenState extends State<SecondScreen> {
         return null;
       }
 
-      final image = await boundary.toImage(pixelRatio: 2.0);
+      final image = await boundary.toImage(pixelRatio: 3.0);
 
       try {
         final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -676,41 +676,90 @@ class _SecondScreenState extends State<SecondScreen> {
     }
   }
 
-  // RECEIPT IMAGE
-  // Plain layout with no table borders or surrounding box.
+  // Width of a text, used to line things up with the table columns.
+  double _textWidth(String text, TextStyle style) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    return painter.width;
+  }
 
   Widget _buildOffscreenReceipt() {
     final sortedData = getSortedData();
     final totalAmount = getTotalAmount();
 
+    // Narrower image + small side padding = bigger, clearer text.
+    const double receiptWidth = 330;
+    const double hPad = 6;
+    const double contentWidth = receiptWidth - (hPad * 2);
+
+    final cols = widget.isTRMode ? 2 : 3;
+    final colW = contentWidth / cols;
+
+    const headerStyle = TextStyle(fontSize: 14, fontWeight: FontWeight.w700);
+    const amountStyle = TextStyle(fontSize: 16, fontWeight: FontWeight.w500);
+    const dateStyle = TextStyle(fontSize: 11);
+
+    final dateText = formatDateTime(currentTime);
+
+    // Name starts exactly above the "Num" text.
+    final numW = _textWidth('Num', headerStyle);
+    final nameLeft = (colW - numW) / 2;
+
+    // Date ends exactly above the end of the "SR" / "TR" text.
+    final lastHeader = widget.isTRMode ? 'TR' : 'SR';
+    final lastHeaderW = _textWidth(lastHeader, headerStyle);
+    final lastColStart = colW * (cols - 1);
+    final headerRight = lastColStart + (colW + lastHeaderW) / 2;
+    final dateRightPad = contentWidth - headerRight;
+
+    // Total ends exactly below the widest SR / TR amount.
+    double widestAmount = 0;
+    for (final item in sortedData) {
+      final shown =
+          widget.isTRMode
+              ? displayTRValue(item['sr'] ?? '')
+              : displayValue(item['sr'] ?? '');
+      final w = _textWidth(shown, amountStyle);
+      if (w > widestAmount) widestAmount = w;
+    }
+    final amountRight = lastColStart + (colW + widestAmount) / 2;
+    final totalRightPad = contentWidth - amountRight;
+
     return Material(
       color: _currentReceiptBackground,
       child: SizedBox(
-        width: 420,
+        width: receiptWidth,
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.symmetric(horizontal: hPad, vertical: 12),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  SizedBox(width: nameLeft),
+                  // Name is cut off if there is no space. Date is never hidden.
                   Expanded(
                     child: Text(
                       widget.name,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: Colors.black54,
-                      ),
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.clip,
+                      style: dateStyle.copyWith(color: Colors.black54),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   Text(
-                    formatDateTime(currentTime),
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(fontSize: 11, color: Colors.black54),
+                    dateText,
+                    maxLines: 1,
+                    softWrap: false,
+                    style: dateStyle.copyWith(color: Colors.black54),
                   ),
+                  SizedBox(width: dateRightPad),
                 ],
               ),
 
@@ -736,13 +785,18 @@ class _SecondScreenState extends State<SecondScreen> {
 
               const SizedBox(height: 6),
 
-              Text(
-                'Total: ₹ $totalAmount',
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black,
+              Padding(
+                padding: EdgeInsets.only(
+                  right: totalRightPad < 0 ? 0 : totalRightPad,
+                ),
+                child: Text(
+                  'Total: ₹ $totalAmount',
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
                 ),
               ),
             ],
