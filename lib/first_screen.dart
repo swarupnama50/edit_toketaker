@@ -36,6 +36,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   static const String _autoTrMinuteKey = 'auto_tr_minute';
   static const String _autoTrLastOnKey = 'auto_tr_last_on_date';
   static const String _autoTrPendingOffKey = 'auto_tr_pending_off';
+  static const bool _autoTrDefaultEnabled = true;
+  static const int _autoTrDefaultHour = 17;
+  static const int _autoTrDefaultMinute = 45;
 
   // TR mode is switched off automatically at 7:00 PM.
   static const int _autoTrEndMinutes = 19 * 60;
@@ -56,7 +59,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       }
       isTRMode = tr;
     });
+    _resetHistory(); // <- add this line
 
+    await _saveMode(tr);
     await _saveMode(tr);
     _scheduleWorkingSave();
 
@@ -73,12 +78,11 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     try {
       final prefs = await SharedPreferences.getInstance();
-
-      if (!(prefs.getBool(_autoTrEnabledKey) ?? false)) return;
+      if (!(prefs.getBool(_autoTrEnabledKey) ?? _autoTrDefaultEnabled)) return;
 
       final startMinutes =
-          (prefs.getInt(_autoTrHourKey) ?? 15) * 60 +
-          (prefs.getInt(_autoTrMinuteKey) ?? 0);
+          (prefs.getInt(_autoTrHourKey) ?? _autoTrDefaultHour) * 60 +
+          (prefs.getInt(_autoTrMinuteKey) ?? _autoTrDefaultMinute);
 
       final now = DateTime.now();
       final nowMinutes = now.hour * 60 + now.minute;
@@ -583,11 +587,12 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   Future<void> showSettingsDialog() async {
     final prefs = await SharedPreferences.getInstance();
 
-    bool autoTrEnabled = prefs.getBool(_autoTrEnabledKey) ?? true;
+    bool autoTrEnabled =
+        prefs.getBool(_autoTrEnabledKey) ?? _autoTrDefaultEnabled;
 
     TimeOfDay autoTrTime = TimeOfDay(
-      hour: prefs.getInt(_autoTrHourKey) ?? 17,
-      minute: prefs.getInt(_autoTrMinuteKey) ?? 45,
+      hour: prefs.getInt(_autoTrHourKey) ?? _autoTrDefaultHour,
+      minute: prefs.getInt(_autoTrMinuteKey) ?? _autoTrDefaultMinute,
     );
 
     // Use the saved choice; older versions stored a true/false switch.
@@ -2067,7 +2072,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     await _restoreWorkingState(savedMode);
     await _checkAutoTrSchedule();
-    await _checkAutoTrSchedule();
 
     if (mounted) {
       await _showFirstInstallGuide();
@@ -3264,7 +3268,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                   }
                   isTRMode = newMode;
                 });
-
+                _resetHistory();
                 await _saveMode(newMode);
                 _scheduleWorkingSave();
               },
