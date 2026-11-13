@@ -138,7 +138,7 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
   }
 
   void _onPointerMove(PointerMoveEvent e) {
-    if (widget.onShare == null ||
+    if ((widget.onShare == null && !widget.isTrash) ||
         _pointers != 1 ||
         _multiTouch ||
         _downPos == null) {
@@ -333,45 +333,6 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
     });
   }
 
-  Future<void> _moveToTrash() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder:
-          (dialogContext) => AlertDialog(
-            title: const Text('Move to Trash?'),
-            content: const Text(
-              'Are you sure you want to move this receipt to Trash?',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                style: TextButton.styleFrom(foregroundColor: Colors.red),
-                child: const Text('Move to Trash'),
-              ),
-            ],
-          ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    try {
-      await ReceiptStorage.moveToTrash(_files[_currentIndex]);
-
-      if (!mounted) return;
-      _removeCurrentFromList('Moved to Trash.');
-    } catch (_) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Could not delete.')));
-    }
-  }
-
   Future<void> _restore() async {
     try {
       await ReceiptStorage.restore(_files[_currentIndex]);
@@ -385,14 +346,27 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
     }
   }
 
-  Future<void> _deleteForever() async {
+  Future<void> _handleDeleteSelected() async {
+    if (_files.isEmpty) return;
+
+    final selectedFiles =
+        _panelOpen
+            ? _files.where((f) => _shareSel.contains(f.path)).toList()
+            : [_files[_currentIndex]];
+
+    if (selectedFiles.isEmpty) return;
+
+    final permanently = widget.isTrash;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder:
           (dialogContext) => AlertDialog(
-            title: const Text('Delete permanently?'),
-            content: const Text(
-              'This receipt will be deleted forever. This cannot be undone.',
+            title: Text(permanently ? 'Delete permanently?' : 'Move to Trash?'),
+            content: Text(
+              permanently
+                  ? 'Delete ${selectedFiles.length} selected receipt(s) forever? This cannot be undone.'
+                  : 'Move ${selectedFiles.length} selected receipt(s) to Trash?',
             ),
             actions: [
               TextButton(
@@ -402,7 +376,7 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
                 style: TextButton.styleFrom(foregroundColor: Colors.red),
-                child: const Text('Delete'),
+                child: Text(permanently ? 'Delete forever' : 'Move to Trash'),
               ),
             ],
           ),
@@ -410,16 +384,87 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
 
     if (confirmed != true || !mounted) return;
 
-    try {
-      await ReceiptStorage.deleteForever(_files[_currentIndex]);
-      if (!mounted) return;
-      _removeCurrentFromList('Deleted permanently.');
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Could not delete.')));
+    final removedPaths = <String>{};
+
+    for (final file in selectedFiles) {
+      try {
+        if (permanently) {
+          await ReceiptStorage.deleteForever(file);
+        } else {
+          await ReceiptStorage.moveToTrash(file);
+        }
+        removedPaths.add(file.path);
+      } catch (_) {
+        // Keep failed files in the viewer.
+      }
     }
+
+    if (!mounted) return;
+
+    if (removedPaths.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not delete receipts.')),
+      );
+      return;
+    }
+
+    final oldIndex = _currentIndex;
+
+    final indexesToRemove = <int>[];
+    for (int i = 0; i < _files.length; i++) {
+      if (removedPaths.contains(_files[i].path)) {
+        indexesToRemove.add(i);
+      }
+    }
+
+    for (final index in indexesToRemove.reversed) {
+      final controller = _scaleControllers.removeAt(index);
+      _files.removeAt(index);
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        controller.dispose();
+      });
+    }
+
+    _shareSel.removeWhere(removedPaths.contains);
+
+    if (_files.isEmpty) {
+      Navigator.pop(context, true);
+      return;
+    }
+
+    final removedBeforeCurrent =
+        indexesToRemove.where((i) => i < oldIndex).length;
+
+    final newIndex = (oldIndex - removedBeforeCurrent).clamp(
+      0,
+      _files.length - 1,
+    );
+
+    setState(() {
+      _currentIndex = newIndex;
+      _panelOpen = false;
+      _shareSel.clear();
+      _dragY = 0;
+      _dragging = false;
+    });
+
+    final oldController = _pageController;
+    _pageController = PageController(initialPage: newIndex);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      oldController.dispose();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          permanently
+              ? 'Deleted ${removedPaths.length} receipt(s) permanently.'
+              : 'Moved ${removedPaths.length} receipt(s) to Trash.',
+        ),
+      ),
+    );
   }
 
   Widget _bottomButton({
@@ -583,7 +628,7 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
                   ],
                 ),
               ),
-              if (widget.onShare != null)
+              if (widget.onShare != null || widget.isTrash)
                 AnimatedPositioned(
                   duration: const Duration(milliseconds: 300),
                   curve: Curves.easeOutCubic,
@@ -610,17 +655,18 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
                           ),
                           const SizedBox(width: 10),
                           _bottomButton(
-                            onPressed: _deleteForever,
+                            onPressed: _handleDeleteSelected,
                             icon: Icons.delete_forever,
-                            label: 'Delete forever',
+                            label:
+                                'Delete forever (${_panelOpen ? _shareCount : 1})',
                             color: Colors.red,
                           ),
                         ]
                         : [
                           _bottomButton(
-                            onPressed: _moveToTrash,
+                            onPressed: _handleDeleteSelected,
                             icon: Icons.delete,
-                            label: 'Delete',
+                            label: 'Delete (${_panelOpen ? _shareCount : 1})',
                             color: Colors.red,
                           ),
                           if (widget.onShare != null) ...[
