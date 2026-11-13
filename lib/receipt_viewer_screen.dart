@@ -85,6 +85,37 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
     }
   }
 
+  void _panelDragUpdate(DragUpdateDetails d) {
+    if (!_pageController.hasClients) return;
+    final p = _pageController.position;
+    p.jumpTo(
+      (p.pixels - d.delta.dx).clamp(p.minScrollExtent, p.maxScrollExtent),
+    );
+  }
+
+  void _panelDragEnd(DragEndDetails d) {
+    if (!_pageController.hasClients) return;
+
+    final v = d.velocity.pixelsPerSecond.dx;
+    int target;
+
+    if (v < -300) {
+      target = _currentIndex + 1;
+    } else if (v > 300) {
+      target = _currentIndex - 1;
+    } else {
+      target = (_pageController.page ?? _currentIndex.toDouble()).round();
+    }
+
+    target = target.clamp(0, _files.length - 1);
+
+    _pageController.animateToPage(
+      target,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
+
   Future<void> _handleShare() async {
     if (_files.isEmpty) return;
 
@@ -414,59 +445,64 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
   }
 
   Widget _buildSharePanel() {
-    return Material(
-      elevation: 12,
-      color: Theme.of(context).colorScheme.surface,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  if (_shareCount == _files.length) {
-                    _shareSel.clear();
-                  } else {
-                    _shareSel.addAll(_files.map((f) => f.path));
-                  }
-                });
-              },
-              child: Text(
-                _shareCount == _files.length ? 'Clear' : 'Select all',
-                style: const TextStyle(fontSize: 14),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragUpdate: _panelDragUpdate,
+      onHorizontalDragEnd: _panelDragEnd,
+      child: Material(
+        elevation: 12,
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    if (_shareCount == _files.length) {
+                      _shareSel.clear();
+                    } else {
+                      _shareSel.addAll(_files.map((f) => f.path));
+                    }
+                  });
+                },
+                child: Text(
+                  _shareCount == _files.length ? 'Clear' : 'Select all',
+                  style: const TextStyle(fontSize: 14),
+                ),
               ),
-            ),
 
-            // Current image selection tick
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _toggleCurrentImageSelection,
-              child: Padding(
-                padding: const EdgeInsets.only(right: 4, top: 8, bottom: 8),
-                child: Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color:
-                        _shareSel.contains(_files[_currentIndex].path)
-                            ? Colors.blue
-                            : Colors.black45,
-                    border: Border.all(color: Colors.white, width: 1.5),
-                  ),
-                  child: Icon(
-                    _shareSel.contains(_files[_currentIndex].path)
-                        ? Icons.check
-                        : Icons.add,
-                    color: Colors.white,
-                    size: 19,
+              // Current image selection tick
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _toggleCurrentImageSelection,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 4, top: 8, bottom: 8),
+                  child: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color:
+                          _shareSel.contains(_files[_currentIndex].path)
+                              ? Colors.blue
+                              : Colors.black45,
+                      border: Border.all(color: Colors.white, width: 1.5),
+                    ),
+                    child: Icon(
+                      _shareSel.contains(_files[_currentIndex].path)
+                          ? Icons.check
+                          : Icons.add,
+                      color: Colors.white,
+                      size: 19,
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -523,6 +559,7 @@ class _ReceiptViewerScreenState extends State<ReceiptViewerScreen> {
                       },
                       builder: (context, index) {
                         return PhotoViewGalleryPageOptions(
+                          gestureDetectorBehavior: HitTestBehavior.translucent,
                           imageProvider: FileImage(_files[index]),
                           initialScale: PhotoViewComputedScale.contained,
                           minScale: PhotoViewComputedScale.contained,

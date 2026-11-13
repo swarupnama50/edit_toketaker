@@ -607,6 +607,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     });
 
     int shareMode = prefs.getInt(ShareHelper.modeKey) ?? 2;
+    bool shareWithCaption = prefs.getBool(ShareHelper.captionKey) ?? true;
 
     // Keep only the last 10 digits (older saves may include 91).
     String initialNumber = (prefs.getString(ShareHelper.numberKey) ?? '')
@@ -932,6 +933,22 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                         } else {
                           await prefs.setBool(_autoTrPendingOffKey, false);
                         }
+                      },
+                    ),
+                    // ---------- SHARE WITH CAPTION ----------
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Share with caption'),
+                      subtitle: const Text(
+                        'Include image numbers when sharing receipts',
+                      ),
+                      value: shareWithCaption,
+                      onChanged: (value) async {
+                        setState(() {
+                          shareWithCaption = value;
+                        });
+
+                        await prefs.setBool(ShareHelper.captionKey, value);
                       },
                     ),
                     if (autoTrEnabled)
@@ -1670,6 +1687,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     if (parsedRows.isEmpty || !mounted) return;
     // If the list already has entries, ask before pasting more.
     if (numControllers.any((c) => c.text.trim().isNotEmpty)) {
+      // Remember the keyboard and focused field state.
+      final previousFocus = FocusManager.instance.primaryFocus;
+      final keyboardWasOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+
       final confirmed = await showDialog<bool>(
         context: context,
         builder:
@@ -1693,7 +1714,17 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
             ),
       );
 
-      if (confirmed != true || !mounted) return;
+      if (!mounted) return;
+
+      // Restore the exact previous keyboard state.
+      if (keyboardWasOpen && previousFocus != null) {
+        FocusScope.of(context).requestFocus(previousFocus);
+      } else {
+        previousFocus?.unfocus();
+        SystemChannels.textInput.invokeMethod('TextInput.hide');
+      }
+
+      if (confirmed != true) return;
     }
 
     int startIndex = numControllers.indexWhere(

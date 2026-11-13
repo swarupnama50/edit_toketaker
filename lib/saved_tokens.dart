@@ -617,7 +617,7 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
       // 3 per row. Change to 2 for even bigger images.
       // childAspectRatio 1 = width and height are the same (square).
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4,
+        crossAxisCount: 3,
         crossAxisSpacing: 0,
         mainAxisSpacing: 0,
         childAspectRatio: 1,
@@ -654,15 +654,17 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      // Full width from the top, so Num / FR / SR are visible.
+                      // 1. Image (unchanged)
                       Image.file(
                         file,
                         fit: BoxFit.fitWidth,
                         alignment: Alignment.topCenter,
-                        cacheWidth: 600,
+                        cacheWidth: 6000,
                         errorBuilder:
                             (_, _, _) => const Icon(Icons.broken_image),
                       ),
+
+                      // Count (top-left)
                       Positioned(
                         top: 2,
                         left: 2,
@@ -672,25 +674,57 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
                             vertical: 1,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.black54,
+                            color: Colors.black.withValues(alpha: 0.25),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
                             '${files.length - index}',
                             style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 9,
+                              fontSize: 10,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
                       ),
+
+                      // Total amount (top-right)
+                      Positioned(
+                        top: 2,
+                        right: 2,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.25),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Builder(
+                            builder: (_) {
+                              final amount =
+                                  _totals[ReceiptTotals.nameOf(file)];
+                              return Text(
+                                amount == null ? '₹ –' : '₹ $amount',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+
+                      // Time (bottom)
                       Positioned(
                         left: 0,
                         right: 0,
                         bottom: 0,
                         child: Container(
-                          color: Colors.black54,
+                          color: Colors.black.withValues(alpha: 0.25),
                           padding: const EdgeInsets.symmetric(vertical: 2),
                           child: Text(
                             _formatReceiptTime(file),
@@ -699,12 +733,14 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 11,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
                       ),
 
+                      // 3. Blue selection overlay (unchanged)
                       Positioned.fill(
                         child: IgnorePointer(
                           child: AnimatedOpacity(
@@ -717,8 +753,10 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
                         ),
                       ),
 
+                      // 4. Selection check circle (unchanged)
+                      // 4. Selection check circle
                       Positioned(
-                        top: 4,
+                        bottom: 22,
                         right: 4,
                         child: AnimatedOpacity(
                           opacity: _isSelecting ? 1 : 0,
@@ -925,9 +963,21 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     }
 
     return PopScope(
-      canPop: !_inTrash,
+      canPop: !_isSelecting && !_inTrash,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _inTrash) {
+        if (didPop) return;
+
+        if (_isSelecting) {
+          // Back cancels selection without leaving this screen.
+          _endDrag();
+          setState(() {
+            _selectedPaths.clear();
+            _baseSelection.clear();
+            _anchorIndex = null;
+            _dragPos = null;
+          });
+        } else if (_inTrash) {
+          // Back from Trash returns to saved receipts.
           setState(() {
             _inTrash = false;
             _selectedPaths.clear();

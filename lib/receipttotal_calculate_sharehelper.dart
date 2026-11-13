@@ -77,6 +77,7 @@ class ShareHelper {
   static const MethodChannel _channel = MethodChannel('token_taker/whatsapp');
   static const String modeKey = 'share_mode';
   static const String numberKey = 'share_whatsapp_number';
+  static const String captionKey = 'share_with_caption';
 
   /// Digits only. A 10-digit number gets the India code (91).
   static String cleanNumber(String raw) {
@@ -103,7 +104,10 @@ class ShareHelper {
     final prefs = await SharedPreferences.getInstance();
     final mode = prefs.getInt(modeKey) ?? 2;
     final number = cleanNumber(prefs.getString(numberKey) ?? '');
-    final captions = await ReceiptCaption.forFiles(files);
+    final captionEnabled = prefs.getBool(captionKey) ?? true;
+
+    final captions =
+        captionEnabled ? await ReceiptCaption.forFiles(files) : <String>[];
 
     if (mode == 0 || mode == 1) {
       if (mode == 0 && number.isEmpty) {

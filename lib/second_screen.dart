@@ -413,22 +413,88 @@ class _SecondScreenState extends State<SecondScreen> {
     );
   }
 
+  TableRow _buildReceiptHeaderRow() {
+    return TableRow(
+      children: [
+        _receiptCell('Num', isHeader: true),
+        if (widget.isTRMode)
+          _receiptCell('TR', isHeader: true)
+        else ...[
+          _receiptCell('FR', isHeader: true),
+          _receiptCell('SR', isHeader: true),
+        ],
+      ],
+    );
+  }
+
+  TableRow _buildReceiptDataRow(
+    Map<String, String> item, {
+    bool showDivider = false,
+  }) {
+    return TableRow(
+      decoration:
+          showDivider
+              ? const BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: Color(0xFF999999), width: 0.6),
+                ),
+              )
+              : null,
+      children: [
+        _receiptCell(item['num'] ?? ''),
+        if (widget.isTRMode)
+          _receiptCell(displayTRValue(item['sr'] ?? ''))
+        else ...[
+          _receiptCell(displayValue(item['fr'] ?? '')),
+          _receiptCell(displayValue(item['sr'] ?? '')),
+        ],
+      ],
+    );
+  }
+
   Widget _cell(String value, {bool isHeader = false}) {
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: isHeader ? 7 : 5, horizontal: 3),
+      padding: EdgeInsets.symmetric(
+        vertical: isHeader ? 5 : 2.2, // <-- SPACE between rows
+        horizontal: 3,
+      ),
       child: Text(
         value,
         textAlign: TextAlign.center,
         style: TextStyle(
           color: Colors.black,
-          fontSize: isHeader ? 14 : 16,
+          fontSize: isHeader ? 14 : 17, // <-- TEXT SIZE
           fontWeight:
               isHeader
                   ? FontWeight.w700
                   : (value.isNotEmpty && !value.startsWith('₹') && value != 'X'
                       ? FontWeight.w600
                       : FontWeight.w500),
-          height: 1.2,
+          height: 1.1, // <-- line height (also affects space)
+        ),
+      ),
+    );
+  }
+
+  Widget _receiptCell(String value, {bool isHeader = false}) {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        vertical: isHeader ? 5 : 2.2,
+        horizontal: 3,
+      ),
+      child: Text(
+        value,
+        textAlign: TextAlign.left,
+        style: TextStyle(
+          color: Colors.black,
+          fontSize: isHeader ? 14 : 17,
+          fontWeight:
+              isHeader
+                  ? FontWeight.w700
+                  : (value.isNotEmpty && !value.startsWith('₹') && value != 'X'
+                      ? FontWeight.w600
+                      : FontWeight.w500),
+          height: 1.1,
         ),
       ),
     );
@@ -768,7 +834,7 @@ class _SecondScreenState extends State<SecondScreen> {
               Table(
                 columnWidths: _columnWidths,
                 children: [
-                  _buildHeaderRow(),
+                  _buildReceiptHeaderRow(),
                   ...sortedData.asMap().entries.map((entry) {
                     final index = entry.key;
                     final item = entry.value;
@@ -778,7 +844,7 @@ class _SecondScreenState extends State<SecondScreen> {
                         _getGroup(item['num'] ?? '') !=
                             _getGroup(sortedData[index - 1]['num'] ?? '');
 
-                    return _buildDataRow(item, showDivider: showDivider);
+                    return _buildReceiptDataRow(item, showDivider: showDivider);
                   }),
                 ],
               ),
