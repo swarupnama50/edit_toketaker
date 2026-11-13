@@ -134,8 +134,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   final ValueNotifier<int> amountRevision = ValueNotifier<int>(0);
   final FocusNode _undoFocus = FocusNode(canRequestFocus: false);
   final FocusNode _redoFocus = FocusNode(canRequestFocus: false);
-
   final TextEditingController nameController = TextEditingController();
+  final ScrollController _listScroll = ScrollController();
+  final FocusNode _snackCancelFocus = FocusNode(canRequestFocus: false);
+  final FocusNode _snackPasteFocus = FocusNode(canRequestFocus: false);
 
   // ================= UNDO / REDO =================
 
@@ -892,7 +894,27 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                       ),
 
                     const Divider(height: 28),
+                    // ---------- SHARE WITH CAPTION ----------
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'Share with caption',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: const Text(
+                        'Include receipt captions when sharing images.',
+                      ),
+                      value: shareWithCaption,
+                      activeTrackColor: _primaryColor,
+                      onChanged: (value) async {
+                        setDialogState(() {
+                          shareWithCaption = value;
+                        });
 
+                        await prefs.setBool(ShareHelper.captionKey, value);
+                      },
+                    ),
+                    const Divider(height: 28),
                     // ---------- AUTO TR MODE ----------
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
@@ -935,22 +957,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                         }
                       },
                     ),
-                    // ---------- SHARE WITH CAPTION ----------
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Share with caption'),
-                      subtitle: const Text(
-                        'Include image numbers when sharing receipts',
-                      ),
-                      value: shareWithCaption,
-                      onChanged: (value) async {
-                        setState(() {
-                          shareWithCaption = value;
-                        });
 
-                        await prefs.setBool(ShareHelper.captionKey, value);
-                      },
-                    ),
                     if (autoTrEnabled)
                       ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -1480,6 +1487,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
   //===================Paste=========================
   Future<void> pasteTokenData() async {
+    // Capture keyboard state before anything changes it.
+    final keyboardWasOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+    final previousFocus = FocusManager.instance.primaryFocus;
+
     final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
     final rawText = clipboardData?.text;
 
@@ -1685,46 +1696,18 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     }
 
     if (parsedRows.isEmpty || !mounted) return;
+
     // If the list already has entries, ask before pasting more.
     if (numControllers.any((c) => c.text.trim().isNotEmpty)) {
-      // Remember the keyboard and focused field state.
-      final previousFocus = FocusManager.instance.primaryFocus;
-      final keyboardWasOpen = MediaQuery.of(context).viewInsets.bottom > 0;
-
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder:
-            (dialogContext) => AlertDialog(
-              title: const Text('Paste again?'),
-              content: Text(
-                'There is already data in the list. '
-                'Add ${parsedRows.length} '
-                '${parsedRows.length == 1 ? 'row' : 'rows'} below it?',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: const Text('Paste'),
-                ),
-              ],
-            ),
-      );
+      final confirmed = await _confirmPasteSnackBar(parsedRows.length);
 
       if (!mounted) return;
 
-      // Restore the exact previous keyboard state.
-      if (keyboardWasOpen && previousFocus != null) {
-        FocusScope.of(context).requestFocus(previousFocus);
-      } else {
-        previousFocus?.unfocus();
-        SystemChannels.textInput.invokeMethod('TextInput.hide');
+      if (!confirmed) {
+        // Cancelled or timed out: put the cursor/keyboard back as it was.
+        _restoreKeyboardAfterPaste(keyboardWasOpen, previousFocus, false);
+        return;
       }
-
-      if (confirmed != true) return;
     }
 
     int startIndex = numControllers.indexWhere(
@@ -1756,6 +1739,113 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     });
 
     _scheduleWorkingSave();
+
+    // Keyboard open -> focus the last empty Num box. Closed -> stay closed.
+    _restoreKeyboardAfterPaste(keyboardWasOpen, previousFocus, true);
+  }
+
+  Future<bool> _confirmPasteSnackBar(int rowCount) {
+    final completer = Completer<bool>();
+    final messenger = ScaffoldMessenger.of(context);
+
+    messenger.hideCurrentSnackBar();
+
+    final controller = messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 8),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 100),
+        padding: const EdgeInsets.fromLTRB(16, 2, 6, 2),
+        content: Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Add $rowCount ${rowCount == 1 ? 'row' : 'rows'} below existing data?',
+              ),
+            ),
+            TextButton(
+              focusNode: _snackCancelFocus,
+              onPressed: () {
+                if (!completer.isCompleted) completer.complete(false);
+                messenger.hideCurrentSnackBar();
+              },
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.white70),
+              ),
+            ),
+            TextButton(
+              focusNode: _snackCancelFocus,
+              onPressed: () {
+                if (!completer.isCompleted) completer.complete(true);
+                messenger.hideCurrentSnackBar();
+              },
+              child: const Text(
+                'Paste',
+                style: TextStyle(
+                  color: Color(0xFF8AB8F0),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    // Timeout or replaced by another snackbar counts as Cancel.
+    controller.closed.then((_) {
+      if (!completer.isCompleted) completer.complete(false);
+    });
+
+    return completer.future;
+  }
+
+  void _restoreKeyboardAfterPaste(
+    bool keyboardWasOpen,
+    FocusNode? previousFocus,
+    bool goToEmptyNum,
+  ) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+
+      // Keyboard was closed: keep it closed.
+      if (!keyboardWasOpen) {
+        hideKeyboard();
+        return;
+      }
+
+      // Cancel: go back to the field the user was in.
+      if (!goToEmptyNum) {
+        if (previousFocus != null && previousFocus.canRequestFocus) {
+          FocusScope.of(context).requestFocus(previousFocus);
+          SystemChannels.textInput.invokeMethod('TextInput.show');
+        }
+        return;
+      }
+
+      // Paste: the last empty Num row may not be built yet (lazy list).
+      // Scroll to the bottom, wait for it to be built, then focus it.
+      for (int attempt = 0; attempt < 3; attempt++) {
+        if (_listScroll.hasClients) {
+          _listScroll.jumpTo(_listScroll.position.maxScrollExtent);
+        }
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted) return;
+      }
+
+      final emptyIndex = numControllers.indexWhere(
+        (c) => c.text.trim().isEmpty,
+      );
+      if (emptyIndex == -1) return;
+
+      final node = numFocusNodes[emptyIndex];
+
+      if (node.canRequestFocus) {
+        FocusScope.of(context).requestFocus(node);
+        SystemChannels.textInput.invokeMethod('TextInput.show');
+      }
+    });
   }
 
   Future<void> _saveCurrentDraft() async {
@@ -3213,6 +3303,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     _undoFocus.dispose();
     _redoFocus.dispose();
     _autoTrTimer?.cancel();
+    _listScroll.dispose();
+    _snackCancelFocus.dispose();
+    _snackPasteFocus.dispose();
 
     // Save the latest working list before disposing.
     _saveWorkingState();
@@ -3380,6 +3473,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
           Expanded(
             child: ListView.builder(
+              controller: _listScroll,
               padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: sortedIndexes.length,
               itemBuilder: (context, index) => buildRow(sortedIndexes[index]),
