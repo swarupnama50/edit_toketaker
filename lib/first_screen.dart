@@ -8,8 +8,8 @@ import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import 'package:token_taker/payment_dialog.dart';
+import 'package:token_taker/values_screen.dart';
 
 class FirstScreen extends StatefulWidget {
   const FirstScreen({super.key});
@@ -528,6 +528,16 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
           ),
         ),
         PopupMenuItem(
+          value: 'values',
+          child: Row(
+            children: [
+              Icon(Icons.calculate_outlined),
+              SizedBox(width: 12),
+              Text('Values'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
           value: 'payment',
           child: Row(
             children: [
@@ -572,6 +582,12 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         case 'copy':
           _copyTokenData();
           break;
+        case 'values':
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const ValuesScreen()),
+          );
+          break;
         case 'payment':
           PaymentDialog.show(context);
           break;
@@ -608,8 +624,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       _saveDestination = savedDestination;
     });
 
-    int shareMode = prefs.getInt(ShareHelper.modeKey) ?? 2;
-    bool shareWithCaption = prefs.getBool(ShareHelper.captionKey) ?? true;
+    int shareMode =
+        prefs.getInt(ShareHelper.modeKey) ?? ShareHelper.defaultMode;
+    bool shareWithCaption =
+        prefs.getBool(ShareHelper.captionKey) ?? ShareHelper.defaultCaption;
 
     // Keep only the last 10 digits (older saves may include 91).
     String initialNumber = (prefs.getString(ShareHelper.numberKey) ?? '')

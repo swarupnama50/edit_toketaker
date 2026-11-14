@@ -1,11 +1,9 @@
 import 'dart:io';
 
-import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 class PaymentDialog extends StatefulWidget {
   const PaymentDialog({super.key});
@@ -13,9 +11,9 @@ class PaymentDialog extends StatefulWidget {
   /// Call this from the menu: PaymentDialog.show(context);
   /// Now opens a full screen instead of a dialog.
   static Future<void> show(BuildContext context) {
-    return Navigator.of(context).push<void>(
-      MaterialPageRoute(builder: (_) => const PaymentDialog()),
-    );
+    return Navigator.of(
+      context,
+    ).push<void>(MaterialPageRoute(builder: (_) => const PaymentDialog()));
   }
 
   @override
@@ -25,7 +23,7 @@ class PaymentDialog extends StatefulWidget {
 class _PaymentDialogState extends State<PaymentDialog> {
   static const String _upiId = '6033037225@okbizaxis';
   static const String _phone = '6033037225';
-  static const String _payeeName = 'Swarup Nama';
+
   static const String _qrAsset = 'assets/my_qr.png';
 
   static const Color _primary = Color(0xFF2878D0);
@@ -73,31 +71,6 @@ class _PaymentDialogState extends State<PaymentDialog> {
   Future<void> _copy(String text, String label) async {
     await Clipboard.setData(ClipboardData(text: text));
     _setStatus('$label copied');
-  }
-
-  Future<void> _payWithUpiApp() async {
-    final upiUrl =
-        'upi://pay?pa=$_upiId'
-        '&pn=${Uri.encodeComponent(_payeeName)}'
-        '&cu=INR';
-
-    try {
-      if (Platform.isAndroid) {
-        // Shows the Android "choose an app" sheet with ALL installed UPI apps
-        // (Google Pay, PhonePe, Paytm, BHIM, ...), instead of opening one directly.
-        final intent = AndroidIntent(action: 'action_view', data: upiUrl);
-        await intent.launchChooser('Pay with');
-      } else {
-        // iOS: the system handles upi:// links.
-        final ok = await launchUrl(
-          Uri.parse(upiUrl),
-          mode: LaunchMode.externalApplication,
-        );
-        if (!ok) _setStatus('No UPI app found on this phone', error: true);
-      }
-    } catch (_) {
-      _setStatus('No UPI app found on this phone', error: true);
-    }
   }
 
   Widget _infoTile({
@@ -201,20 +174,7 @@ class _PaymentDialogState extends State<PaymentDialog> {
                   label: const Text('Download QR'),
                 ),
               ),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _primary,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: _payWithUpiApp,
-                  icon: const Icon(Icons.send),
-                  label: const Text('Pay with UPI app'),
-                ),
-              ),
+
               const SizedBox(height: 6),
               _infoTile(
                 icon: Icons.account_balance_outlined,

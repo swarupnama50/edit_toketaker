@@ -79,6 +79,10 @@ class ShareHelper {
   static const String numberKey = 'share_whatsapp_number';
   static const String captionKey = 'share_with_caption';
 
+  // Defaults: 1 = Open WhatsApp, caption off.
+  static const int defaultMode = 1;
+  static const bool defaultCaption = false;
+
   /// Digits only. A 10-digit number gets the India code (91).
   static String cleanNumber(String raw) {
     var digits = raw.replaceAll(RegExp(r'\D'), '');
@@ -87,8 +91,11 @@ class ShareHelper {
     return digits;
   }
 
-  static Future<void> _normalShare(List<File> files, List<String> captions) {
-    return SharePlus.instance.share(
+  static Future<void> _normalShare(
+    List<File> files,
+    List<String> captions,
+  ) async {
+    await SharePlus.instance.share(
       ShareParams(
         files: files.map((f) => XFile(f.path, mimeType: 'image/jpeg')).toList(),
         text: captions.isEmpty ? null : captions.join('\n'),
@@ -102,9 +109,9 @@ class ShareHelper {
     void Function(String message)? onNotice,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    final mode = prefs.getInt(modeKey) ?? 2;
+    final mode = prefs.getInt(modeKey) ?? defaultMode;
     final number = cleanNumber(prefs.getString(numberKey) ?? '');
-    final captionEnabled = prefs.getBool(captionKey) ?? true;
+    final captionEnabled = prefs.getBool(captionKey) ?? defaultCaption;
 
     final captions =
         captionEnabled ? await ReceiptCaption.forFiles(files) : <String>[];
