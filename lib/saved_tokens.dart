@@ -172,6 +172,44 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
     );
   }
 
+  Future<void> _deleteAllForever() async {
+    final files = List<File>.from(_trash);
+    if (files.isEmpty) return;
+
+    final ok = await _confirm(
+      title: 'Delete all permanently?',
+      message:
+          'Delete all ${_countText(files.length)} in Trash forever? '
+          'This action cannot be undone.',
+      action: 'Delete all',
+    );
+
+    if (!ok || !mounted) return;
+
+    var deleted = 0;
+    var failed = 0;
+
+    for (final file in files) {
+      try {
+        await ReceiptStorage.deleteForever(file);
+        deleted++;
+      } catch (_) {
+        failed++;
+      }
+    }
+
+    if (!mounted) return;
+
+    setState(() => _selectedPaths.clear());
+    await _loadTrash(); // also leaves Trash automatically when it becomes empty
+
+    _showSnack(
+      failed == 0
+          ? '${_countText(deleted)} deleted permanently.'
+          : '$deleted deleted permanently. $failed could not be deleted.',
+    );
+  }
+
   Future<void> _loadTrash() async {
     final files = await ReceiptStorage.listJpgs(
       await ReceiptStorage.trashDir(),
@@ -1002,6 +1040,13 @@ class _SavedReceiptsScreenState extends State<SavedReceiptsScreen> {
                   _isEverythingSelected ? Icons.deselect : Icons.select_all,
                 ),
                 onPressed: _toggleSelectEverything,
+              )
+            else if (_inTrash && _trash.isNotEmpty)
+              TextButton.icon(
+                onPressed: _deleteAllForever,
+                icon: const Icon(Icons.delete_forever, size: 20),
+                label: const Text('Delete all'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
               ),
           ],
         ),
