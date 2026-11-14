@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
@@ -10,10 +11,10 @@ class PaymentDialog extends StatefulWidget {
   const PaymentDialog({super.key});
 
   /// Call this from the menu: PaymentDialog.show(context);
+  /// Now opens a full screen instead of a dialog.
   static Future<void> show(BuildContext context) {
-    return showDialog<void>(
-      context: context,
-      builder: (_) => const PaymentDialog(),
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute(builder: (_) => const PaymentDialog()),
     );
   }
 
@@ -75,15 +76,25 @@ class _PaymentDialogState extends State<PaymentDialog> {
   }
 
   Future<void> _payWithUpiApp() async {
-    final uri = Uri.parse(
-      'upi://pay?pa=$_upiId'
-      '&pn=${Uri.encodeComponent(_payeeName)}'
-      '&cu=INR',
-    );
+    final upiUrl =
+        'upi://pay?pa=$_upiId'
+        '&pn=${Uri.encodeComponent(_payeeName)}'
+        '&cu=INR';
 
     try {
-      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!ok) _setStatus('No UPI app found on this phone', error: true);
+      if (Platform.isAndroid) {
+        // Shows the Android "choose an app" sheet with ALL installed UPI apps
+        // (Google Pay, PhonePe, Paytm, BHIM, ...), instead of opening one directly.
+        final intent = AndroidIntent(action: 'action_view', data: upiUrl);
+        await intent.launchChooser('Pay with');
+      } else {
+        // iOS: the system handles upi:// links.
+        final ok = await launchUrl(
+          Uri.parse(upiUrl),
+          mode: LaunchMode.externalApplication,
+        );
+        if (!ok) _setStatus('No UPI app found on this phone', error: true);
+      }
     } catch (_) {
       _setStatus('No UPI app found on this phone', error: true);
     }
@@ -95,120 +106,143 @@ class _PaymentDialogState extends State<PaymentDialog> {
     required String value,
     required VoidCallback onCopy,
   }) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      leading: Icon(icon, color: _primary),
-      title: Text(title),
-      subtitle: Text(value),
-      trailing: IconButton(
-        tooltip: 'Copy',
-        icon: const Icon(Icons.copy, size: 20),
-        onPressed: onCopy,
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(top: 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: _border),
+      ),
+      child: ListTile(
+        leading: Icon(icon, color: _primary),
+        title: Text(title),
+        subtitle: Text(
+          value,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87,
+          ),
+        ),
+        trailing: IconButton(
+          tooltip: 'Copy',
+          icon: const Icon(Icons.copy, size: 22),
+          onPressed: onCopy,
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Row(
-        children: [
-          Icon(Icons.payment_outlined, color: _primary),
-          SizedBox(width: 8),
-          Text('Payment'),
-        ],
-      ),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    // Make the QR as large as the screen allows (max 380).
+    final screenWidth = MediaQuery.of(context).size.width;
+    final qrSize = (screenWidth - 32 - 24).clamp(200.0, 380.0);
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F6F8),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: _primary),
+        title: const Row(
           children: [
-            const Text(
-              'Scan to pay',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(color: _border),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Image.asset(
-                _qrAsset,
-                width: 200,
-                height: 200,
-                errorBuilder:
-                    (_, __, ___) => const SizedBox(
-                      width: 200,
-                      height: 200,
-                      child: Center(child: Text('QR image not found')),
-                    ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _saving ? null : _downloadQr,
-                icon:
-                    _saving
-                        ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                        : const Icon(Icons.download),
-                label: const Text('Download QR'),
-              ),
-            ),
-            const Divider(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _primary,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _payWithUpiApp,
-                icon: const Icon(Icons.send),
-                label: const Text('Pay with UPI app'),
-              ),
-            ),
-            const SizedBox(height: 4),
-            _infoTile(
-              icon: Icons.account_balance_outlined,
-              title: 'UPI ID',
-              value: _upiId,
-              onCopy: () => _copy(_upiId, 'UPI ID'),
-            ),
-            _infoTile(
-              icon: Icons.phone_outlined,
-              title: 'Phone number',
-              value: _phone,
-              onCopy: () => _copy(_phone, 'Number'),
-            ),
-            if (_status != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                _status!,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: _isError ? Colors.red : Colors.green.shade700,
-                ),
-              ),
-            ],
+            Icon(Icons.payment_outlined, color: _primary),
+            SizedBox(width: 8),
+            Text('Payment'),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Close'),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              const Text(
+                'Scan to pay',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: _border),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Image.asset(
+                  _qrAsset,
+                  width: qrSize,
+                  height: qrSize,
+                  fit: BoxFit.contain,
+                  errorBuilder:
+                      (_, __, ___) => SizedBox(
+                        width: qrSize,
+                        height: qrSize,
+                        child: const Center(child: Text('QR image not found')),
+                      ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton.icon(
+                  onPressed: _saving ? null : _downloadQr,
+                  icon:
+                      _saving
+                          ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                          : const Icon(Icons.download),
+                  label: const Text('Download QR'),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _primary,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: _payWithUpiApp,
+                  icon: const Icon(Icons.send),
+                  label: const Text('Pay with UPI app'),
+                ),
+              ),
+              const SizedBox(height: 6),
+              _infoTile(
+                icon: Icons.account_balance_outlined,
+                title: 'UPI ID',
+                value: _upiId,
+                onCopy: () => _copy(_upiId, 'UPI ID'),
+              ),
+              _infoTile(
+                icon: Icons.phone_outlined,
+                title: 'Phone number',
+                value: _phone,
+                onCopy: () => _copy(_phone, 'Number'),
+              ),
+              if (_status != null) ...[
+                const SizedBox(height: 14),
+                Text(
+                  _status!,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: _isError ? Colors.red : Colors.green.shade700,
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
-      ],
+      ),
     );
   }
 }
