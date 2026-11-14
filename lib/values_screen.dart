@@ -264,7 +264,7 @@ class _ValuesScreenState extends State<ValuesScreen> {
             alignment: Alignment.centerRight,
             child: TextButton.icon(
               onPressed: () {
-                Clipboard.setData(ClipboardData(text: _values.join(', ')));
+                Clipboard.setData(ClipboardData(text: _values.join('\n')));
 
                 ScaffoldMessenger.of(
                   context,
