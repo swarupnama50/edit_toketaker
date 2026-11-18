@@ -45,6 +45,7 @@ class AppKeyboard extends StatelessWidget {
     this.amountMode = false,
     this.primaryColor = const Color(0xFF2878D0),
   });
+
   final bool amountMode;
   final ValueChanged<String> onKey;
   final VoidCallback onBackspace;
@@ -75,7 +76,7 @@ class AppKeyboard extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
             onTap: onTap,
             child: SizedBox(
-              height: 44,
+              height: 40,
               child: Center(
                 child:
                     icon != null
@@ -104,7 +105,8 @@ class AppKeyboard extends StatelessWidget {
 
   Widget _letter(String k) =>
       _key(k, () => onKey(k), color: _letterColor, textColor: primaryColor);
-  Widget _spacer() => const Expanded(child: SizedBox(height: 48));
+
+  Widget _spacer() => const Expanded(child: SizedBox());
 
   @override
   Widget build(BuildContext context) {
@@ -116,7 +118,7 @@ class AppKeyboard extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Row 1
+            // Row 1: 1 2 3
             Row(
               children:
                   amountMode
@@ -133,15 +135,15 @@ class AppKeyboard extends StatelessWidget {
                         ),
                       ]
                       : [
-                        _letter('V'),
+                        _spacer(),
                         _digit('1'),
                         _digit('2'),
                         _digit('3'),
-                        _letter('H'),
+                        _spacer(),
                       ],
             ),
 
-            // Row 2
+            // Row 2: V 4 5 6 H
             Row(
               children:
                   amountMode
@@ -153,36 +155,66 @@ class AppKeyboard extends StatelessWidget {
                         _spacer(),
                       ]
                       : [
-                        _letter('AP'),
+                        _letter('V'),
                         _digit('4'),
                         _digit('5'),
                         _digit('6'),
+                        _letter('H'),
+                      ],
+            ),
+
+            // Row 3: AP 7 8 9 E
+            Row(
+              children:
+                  amountMode
+                      ? [
+                        _spacer(),
+                        _digit('7'),
+                        _digit('8'),
+                        _digit('9'),
+                        _spacer(),
+                      ]
+                      : [
+                        _letter('AP'),
+                        _digit('7'),
+                        _digit('8'),
+                        _digit('9'),
                         _letter('E'),
                       ],
             ),
 
-            // Row 3
+            // Row 4: HP 0 Backspace
             Row(
-              children: [
-                amountMode ? _spacer() : _letter('HP'),
-                _digit('7'),
-                _digit('8'),
-                _digit('9'),
-                _key(
-                  '',
-                  onBackspace,
-                  icon: Icons.backspace_outlined,
-                  color: _actionColor,
-                ),
-              ],
+              children:
+                  amountMode
+                      ? [
+                        _spacer(),
+                        Expanded(flex: 2, child: _key('0', () => onKey('0'))),
+                        _spacer(),
+                        _key(
+                          '',
+                          onBackspace,
+                          icon: Icons.backspace_outlined,
+                          color: _actionColor,
+                        ),
+                      ]
+                      : [
+                        _letter('HP'),
+                        Expanded(flex: 2, child: _key('0', () => onKey('0'))),
+                        _key(
+                          '',
+                          onBackspace,
+                          icon: Icons.backspace_outlined,
+                          color: _actionColor,
+                        ),
+                      ],
             ),
 
-            // 0  SPACE  ENTER
+            // Bottom row: SPACE ENTER
             Row(
               children: [
-                Expanded(child: _key('0', () => onKey('0'))),
                 Expanded(
-                  flex: 2,
+                  flex: 3,
                   child: _key(
                     'SPACE',
                     onSpace,
