@@ -40,6 +40,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   static const bool _autoTrDefaultEnabled = true;
   static const int _autoTrDefaultHour = 17;
   static const int _autoTrDefaultMinute = 45;
+  static const String _keepNameOnClearKey = 'keep_name_on_clear';
 
   // ===== In-app keyboard (NEW) =====
   static const String _customKeyboardKey = 'use_custom_keyboard';
@@ -772,6 +773,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     bool autoTrEnabled =
         prefs.getBool(_autoTrEnabledKey) ?? _autoTrDefaultEnabled;
+    bool keepNameOnClear = prefs.getBool(_keepNameOnClearKey) ?? true;
 
     TimeOfDay autoTrTime = TimeOfDay(
       hour: prefs.getInt(_autoTrHourKey) ?? _autoTrDefaultHour,
@@ -1245,6 +1247,29 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                           await _checkAutoTrSchedule();
                         },
                       ),
+                    const Divider(height: 28),
+                    // ---------- KEEP NAME WHEN CLEARING ----------
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'Keep name when clearing',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: const Text(
+                        'Keep the name when using Clear All.',
+                      ),
+                      value: keepNameOnClear,
+                      activeTrackColor: _primaryColor,
+                      onChanged: (value) async {
+                        setDialogState(() {
+                          keepNameOnClear = value;
+                        });
+
+                        await prefs.setBool(_keepNameOnClearKey, value);
+                      },
+                    ),
+
+                    const Divider(height: 28),
                   ],
                 ),
               ),
@@ -2922,9 +2947,15 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     // Cancel any pending auto-save.
     _workingSaveTimer?.cancel();
 
+    final prefs = await SharedPreferences.getInstance();
+    final keepName = prefs.getBool(_keepNameOnClearKey) ?? true;
+
+    if (!mounted) return;
+
     setState(() {
       _trFromFr.clear();
       _hiddenFr.clear();
+
       // Dispose all existing controllers and focus nodes.
       for (final controller in numControllers) {
         _numberWasEmpty.remove(controller);
@@ -2951,7 +2982,6 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         node.dispose();
       }
 
-      // Remove all rows and focus nodes.
       numControllers.clear();
       frControllers.clear();
       srControllers.clear();
@@ -2960,15 +2990,15 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       frFocusNodes.clear();
       srFocusNodes.clear();
 
-      // Reset the current token.
-      nameController.clear();
+      // Keep or clear the name according to Settings.
+      if (!keepName) {
+        nameController.clear();
+      }
+
       warnedDuplicateRows.clear();
       _activeDraftId = null;
 
-      // Create exactly one fresh row.
       addNewRow();
-
-      // Refresh total and Continue button.
       amountRevision.value++;
     });
     _resetHistory();
