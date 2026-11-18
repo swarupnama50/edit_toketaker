@@ -10,6 +10,7 @@ import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:token_taker/payment_dialog.dart';
 import 'package:token_taker/values_screen.dart';
+import 'package:token_taker/keyboard.dart';
 
 class FirstScreen extends StatefulWidget {
   const FirstScreen({super.key});
@@ -39,6 +40,12 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   static const bool _autoTrDefaultEnabled = true;
   static const int _autoTrDefaultHour = 17;
   static const int _autoTrDefaultMinute = 45;
+
+  // ===== In-app keyboard (NEW) =====
+  static const String _customKeyboardKey = 'use_custom_keyboard';
+  bool _useCustomKeyboard = true; // default ON
+  final ValueNotifier<bool> _customKbVisible = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> _kbAmountMode = ValueNotifier<bool>(false);
 
   // TR mode is switched off automatically at 7:00 PM.
   static const int _autoTrEndMinutes = 19 * 60;
@@ -199,6 +206,164 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     warnedDuplicateRows.clear();
     amountRevision.value++;
+  }
+
+  // ================= IN-APP KEYBOARD (NEW) =================
+  // Which box currently has focus: 'num', 'fr' or 'sr' (sr also means TR).
+  ({String type, int index})? _focusedField() {
+    for (int i = 0; i < numFocusNodes.length; i++) {
+      if (numFocusNodes[i].hasFocus) return (type: 'num', index: i);
+      if (frFocusNodes[i].hasFocus) return (type: 'fr', index: i);
+      if (srFocusNodes[i].hasFocus) return (type: 'sr', index: i);
+    }
+    return null;
+  }
+
+  TextEditingController _controllerFor(String type, int i) {
+    if (type == 'num') return numControllers[i];
+    if (type == 'fr') return frControllers[i];
+    return srControllers[i];
+  }
+
+  void _onKeyboardKey(String key) {
+    final f = _focusedField();
+    if (f == null) return;
+
+    final c = _controllerFor(f.type, f.index);
+
+    if (f.type == 'num') {
+      final next = NumKeyboardRules.applyKey(c.text, key);
+      if (next == null) return;
+
+      c.value = TextEditingValue(
+        text: next,
+        selection: TextSelection.collapsed(offset: next.length),
+      );
+      _onNumChanged(f.index, next);
+    } else {
+      final next = AmountKeyboardRules.applyKey(c.text, key);
+      if (next == null) return;
+
+      c.value = TextEditingValue(
+        text: next,
+        selection: TextSelection.collapsed(offset: next.length),
+      );
+      _onAmountChanged(f.index, next, f.type == 'fr');
+    }
+  }
+
+  // Same work the amount boxes' onChanged does.
+  void _onAmountChanged(int index, String val, bool isFr) {
+    final controller = isFr ? frControllers[index] : srControllers[index];
+
+    if (val.endsWith(' ')) {
+      handleSpaceInput(controller, val, index, isFr ? 'fr' : 'sr');
+    } else {
+      handleAmountWithI(controller, val, index, isFr);
+    }
+  }
+
+  void _updateCustomKeyboardVisibility() {
+    final numFocus = numFocusNodes.any((n) => n.hasFocus);
+    final amountFocus =
+        frFocusNodes.any((n) => n.hasFocus) ||
+        srFocusNodes.any((n) => n.hasFocus);
+
+    final show = _useCustomKeyboard && (numFocus || amountFocus);
+    _kbAmountMode.value = amountFocus && !numFocus;
+
+    if (_customKbVisible.value == show) return;
+    _customKbVisible.value = show;
+
+    // Keep the focused row visible after the list shrinks.
+    if (show) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final f = _focusedField();
+        if (f == null) return;
+        final node =
+            f.type == 'num'
+                ? numFocusNodes[f.index]
+                : f.type == 'fr'
+                ? frFocusNodes[f.index]
+                : srFocusNodes[f.index];
+        final ctx = node.context;
+        if (ctx != null && ctx.mounted) {
+          Scrollable.ensureVisible(
+            ctx,
+            duration: const Duration(milliseconds: 150),
+          );
+        }
+      });
+    }
+  }
+
+  void _onKeyboardBackspace() {
+    final f = _focusedField();
+    if (f == null) return;
+
+    final c = _controllerFor(f.type, f.index);
+
+    if (c.text.isEmpty) {
+      handleBackspace(c, f.index, f.type); // same as device keyboard
+      return;
+    }
+
+    final t = c.text.substring(0, c.text.length - 1);
+    c.value = TextEditingValue(
+      text: t,
+      selection: TextSelection.collapsed(offset: t.length),
+    );
+    if (f.type == 'num') _onNumChanged(f.index, t);
+  }
+
+  // SPACE: same as pressing Space on the device keyboard.
+  void _onKeyboardSpace() {
+    final f = _focusedField();
+    if (f == null) return;
+
+    if (f.type == 'num') {
+      final value = numControllers[f.index].text.trim().toUpperCase();
+      if (!isValidCompletedNumber(value)) return;
+      checkDuplicateNumber(value, f.index);
+    }
+
+    moveToNextField(f.index, f.type);
+  }
+
+  // ENTER: same as the device keyboard's Enter action.
+  void _onKeyboardEnter() {
+    final f = _focusedField();
+    if (f == null) return;
+
+    if (f.type == 'num') {
+      final value = numControllers[f.index].text.trim().toUpperCase();
+      if (!isValidCompletedNumber(value)) return;
+      checkDuplicateNumber(value, f.index);
+      moveToNextAmount(f.index, 'num');
+    } else if (f.type == 'fr') {
+      moveToNextAmount(f.index, 'fr');
+    } else {
+      moveToNextAmount(f.index, isTRMode ? 'tr' : 'sr');
+    }
+  }
+
+  // Same work the Num box's onChanged used to do.
+  void _onNumChanged(int index, String val) {
+    final value = val.trim().toUpperCase();
+
+    if (value.length >= 2 && isValidCompletedNumber(value)) {
+      checkDuplicateNumber(value, index);
+    } else {
+      warnedDuplicateRows.remove(index);
+    }
+
+    if (val.endsWith(' ')) {
+      handleSpaceInput(numControllers[index], val, index, 'num');
+    }
+
+    if (val.isEmpty) {
+      compactRowsAfterDelete(index);
+    }
   }
 
   // Switching back to FR, SR mode:
@@ -628,6 +793,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
         prefs.getInt(ShareHelper.modeKey) ?? ShareHelper.defaultMode;
     bool shareWithCaption =
         prefs.getBool(ShareHelper.captionKey) ?? ShareHelper.defaultCaption;
+    bool appKeyboard = _useCustomKeyboard; // NEW
 
     // Keep only the last 10 digits (older saves may include 91).
     String initialNumber = (prefs.getString(ShareHelper.numberKey) ?? '')
@@ -911,6 +1077,27 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                         ),
                       ),
 
+                    const Divider(height: 28),
+                    // ---------- APP KEYBOARD (NEW) ----------
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'App keyboard',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: const Text(
+                        'Use the built-in keyboard for Num and amount boxes. '
+                        'Turn off to use the device keyboard.',
+                      ),
+                      value: appKeyboard,
+                      activeTrackColor: _primaryColor,
+                      onChanged: (value) async {
+                        setDialogState(() => appKeyboard = value);
+                        setState(() => _useCustomKeyboard = value);
+                        _updateCustomKeyboardVisibility();
+                        await prefs.setBool(_customKeyboardKey, value);
+                      },
+                    ),
                     const Divider(height: 28),
                     // ---------- SHARE WITH CAPTION ----------
                     SwitchListTile(
@@ -1506,7 +1693,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   //===================Paste=========================
   Future<void> pasteTokenData() async {
     // Capture keyboard state before anything changes it.
-    final keyboardWasOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+    // (Also counts the in-app keyboard.)
+    final keyboardWasOpen =
+        MediaQuery.of(context).viewInsets.bottom > 0 || _customKbVisible.value;
     final previousFocus = FocusManager.instance.primaryFocus;
 
     final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
@@ -1793,7 +1982,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
               ),
             ),
             TextButton(
-              focusNode: _snackCancelFocus,
+              focusNode: _snackPasteFocus,
               onPressed: () {
                 if (!completer.isCompleted) completer.complete(true);
                 messenger.hideCurrentSnackBar();
@@ -1837,7 +2026,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
       if (!goToEmptyNum) {
         if (previousFocus != null && previousFocus.canRequestFocus) {
           FocusScope.of(context).requestFocus(previousFocus);
-          SystemChannels.textInput.invokeMethod('TextInput.show');
+          if (!_useCustomKeyboard) {
+            SystemChannels.textInput.invokeMethod('TextInput.show');
+          }
         }
         return;
       }
@@ -1861,7 +2052,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
       if (node.canRequestFocus) {
         FocusScope.of(context).requestFocus(node);
-        SystemChannels.textInput.invokeMethod('TextInput.show');
+        if (!_useCustomKeyboard) {
+          SystemChannels.textInput.invokeMethod('TextInput.show');
+        }
       }
     });
   }
@@ -2206,6 +2399,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
   Future<void> _loadMode() async {
     final prefs = await SharedPreferences.getInstance();
     final savedMode = prefs.getBool('isTRMode') ?? false;
+    _useCustomKeyboard = prefs.getBool(_customKeyboardKey) ?? true; // NEW
 
     if (!mounted) return;
 
@@ -2952,9 +3146,13 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     frControllers.add(frController);
     srControllers.add(srController);
 
-    numFocusNodes.add(FocusNode());
-    frFocusNodes.add(FocusNode());
-    srFocusNodes.add(FocusNode());
+    // Num focus node also drives the in-app keyboard (NEW).
+    final numNode = FocusNode();
+    numNode.addListener(_updateCustomKeyboardVisibility);
+    numFocusNodes.add(numNode);
+
+    frFocusNodes.add(FocusNode()..addListener(_updateCustomKeyboardVisibility));
+    srFocusNodes.add(FocusNode()..addListener(_updateCustomKeyboardVisibility));
   }
 
   // ================= REMOVE ROW =================
@@ -3201,7 +3399,9 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
               width: double.infinity,
               enabled: isNumEnabled(index),
               highlight: index == firstEmptyIndex,
-              keyboardType: TextInputType.text,
+              // NEW: no device keyboard when the app keyboard is on.
+              keyboardType:
+                  _useCustomKeyboard ? TextInputType.none : TextInputType.text,
               inputFormatters: [
                 LengthLimitingTextInputFormatter(4),
                 TextInputFormatter.withFunction((oldValue, newValue) {
@@ -3228,23 +3428,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                   return oldValue;
                 }),
               ],
-              onChanged: (val) {
-                final value = val.trim().toUpperCase();
-
-                if (value.length >= 2 && isValidCompletedNumber(value)) {
-                  checkDuplicateNumber(value, index);
-                } else {
-                  warnedDuplicateRows.remove(index);
-                }
-
-                if (val.endsWith(' ')) {
-                  handleSpaceInput(numControllers[index], val, index, 'num');
-                }
-
-                if (val.isEmpty) {
-                  compactRowsAfterDelete(index);
-                }
-              },
+              onChanged: (val) => _onNumChanged(index, val),
               onSubmitted: (_) {
                 final value = numControllers[index].text.trim().toUpperCase();
 
@@ -3271,7 +3455,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                 fieldType: 'fr',
                 width: double.infinity,
                 enabled: isFirstFilled(index),
-                keyboardType: TextInputType.text,
+                keyboardType:
+                    _useCustomKeyboard
+                        ? TextInputType.none
+                        : TextInputType.text,
                 inputFormatters: [AmountInputFormatter()],
                 onChanged: (val) {
                   if (val.endsWith(' ')) {
@@ -3295,7 +3482,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
               fieldType: 'sr',
               width: double.infinity,
               enabled: isFirstFilled(index),
-              keyboardType: TextInputType.text,
+              keyboardType:
+                  _useCustomKeyboard ? TextInputType.none : TextInputType.text,
               inputFormatters: [AmountInputFormatter()],
               onChanged: (val) {
                 if (val.endsWith(' ')) {
@@ -3324,6 +3512,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     _listScroll.dispose();
     _snackCancelFocus.dispose();
     _snackPasteFocus.dispose();
+    _kbAmountMode.dispose();
 
     // Save the latest working list before disposing.
     _saveWorkingState();
@@ -3356,6 +3545,7 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     nameController.dispose();
     amountRevision.dispose();
+    _customKbVisible.dispose(); // NEW
 
     super.dispose();
   }
@@ -3682,6 +3872,35 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
+              );
+            },
+          ),
+
+          // ===== In-app keyboard with Android Back handling =====
+          ListenableBuilder(
+            listenable: Listenable.merge([_customKbVisible, _kbAmountMode]),
+            builder: (context, _) {
+              final keyboardVisible = _customKbVisible.value;
+
+              return PopScope(
+                canPop: !keyboardVisible,
+                onPopInvokedWithResult: (didPop, result) {
+                  if (!didPop && keyboardVisible) {
+                    _customKbVisible.value = false;
+                    FocusManager.instance.primaryFocus?.unfocus();
+                  }
+                },
+                child:
+                    keyboardVisible
+                        ? AppKeyboard(
+                          primaryColor: _primaryColor,
+                          amountMode: _kbAmountMode.value,
+                          onKey: _onKeyboardKey,
+                          onBackspace: _onKeyboardBackspace,
+                          onSpace: _onKeyboardSpace,
+                          onEnter: _onKeyboardEnter,
+                        )
+                        : const SizedBox.shrink(),
               );
             },
           ),
