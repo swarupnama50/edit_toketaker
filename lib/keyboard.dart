@@ -64,8 +64,10 @@ class AppKeyboard extends StatelessWidget {
     Color? color,
     Color? textColor,
     double fontSize = 18,
+    int flex = 3,
   }) {
     return Expanded(
+      flex: flex,
       child: Padding(
         padding: const EdgeInsets.all(2),
         child: Material(
@@ -76,7 +78,7 @@ class AppKeyboard extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
             onTap: onTap,
             child: SizedBox(
-              height: 40,
+              height: 44,
               child: Center(
                 child:
                     icon != null
@@ -101,12 +103,28 @@ class AppKeyboard extends StatelessWidget {
     );
   }
 
-  Widget _digit(String k) => _key(k, () => onKey(k));
+  // Digits: wider and bigger text.
+  Widget _digit(String k) => _key(k, () => onKey(k), fontSize: 21, flex: 3);
 
-  Widget _letter(String k) =>
-      _key(k, () => onKey(k), color: _letterColor, textColor: primaryColor);
+  // Side letters: narrower and smaller text.
+  Widget _letter(String k) => _key(
+    k,
+    () => onKey(k),
+    color: _letterColor,
+    textColor: primaryColor,
+    fontSize: 15,
+    flex: 2,
+  );
 
-  Widget _spacer() => const Expanded(child: SizedBox());
+  Widget _spacer() => const Expanded(flex: 2, child: SizedBox());
+
+  Widget _backspace() => _key(
+    '',
+    onBackspace,
+    icon: Icons.backspace_outlined,
+    color: _actionColor,
+    flex: 2,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -118,7 +136,7 @@ class AppKeyboard extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Row 1: 1 2 3
+            // Row 1
             Row(
               children:
                   amountMode
@@ -127,12 +145,7 @@ class AppKeyboard extends StatelessWidget {
                         _digit('1'),
                         _digit('2'),
                         _digit('3'),
-                        _key(
-                          'i',
-                          () => onKey('I'),
-                          color: _letterColor,
-                          textColor: primaryColor,
-                        ),
+                        _letter('i'),
                       ]
                       : [
                         _spacer(),
@@ -143,7 +156,7 @@ class AppKeyboard extends StatelessWidget {
                       ],
             ),
 
-            // Row 2: V 4 5 6 H
+            // Row 2
             Row(
               children:
                   amountMode
@@ -163,7 +176,7 @@ class AppKeyboard extends StatelessWidget {
                       ],
             ),
 
-            // Row 3: AP 7 8 9 E
+            // Row 3
             Row(
               children:
                   amountMode
@@ -183,55 +196,40 @@ class AppKeyboard extends StatelessWidget {
                       ],
             ),
 
-            // Row 4: HP 0 Backspace
+            // Row 4: zero spans the 3 digit columns (3+3+3 = 9)
             Row(
               children:
                   amountMode
                       ? [
                         _spacer(),
-                        Expanded(flex: 2, child: _key('0', () => onKey('0'))),
-                        _spacer(),
-                        _key(
-                          '',
-                          onBackspace,
-                          icon: Icons.backspace_outlined,
-                          color: _actionColor,
-                        ),
+                        _key('0', () => onKey('0'), fontSize: 21, flex: 9),
+                        _backspace(),
                       ]
                       : [
                         _letter('HP'),
-                        Expanded(flex: 2, child: _key('0', () => onKey('0'))),
-                        _key(
-                          '',
-                          onBackspace,
-                          icon: Icons.backspace_outlined,
-                          color: _actionColor,
-                        ),
+                        _key('0', () => onKey('0'), fontSize: 21, flex: 9),
+                        _backspace(),
                       ],
             ),
 
-            // Bottom row: SPACE ENTER
+            // Bottom row: SPACE = left column + zero width (2+9 = 11)
             Row(
               children: [
-                Expanded(
-                  flex: 3,
-                  child: _key(
-                    'SPACE',
-                    onSpace,
-                    color: _letterColor,
-                    textColor: primaryColor,
-                    fontSize: 15,
-                  ),
+                _key(
+                  'SPACE',
+                  onSpace,
+                  color: _letterColor,
+                  textColor: primaryColor,
+                  fontSize: 15,
+                  flex: 11,
                 ),
-                Expanded(
-                  flex: 2,
-                  child: _key(
-                    'ENTER',
-                    onEnter,
-                    color: primaryColor,
-                    textColor: Colors.white,
-                    fontSize: 15,
-                  ),
+                _key(
+                  '',
+                  onEnter,
+                  icon: Icons.keyboard_return,
+                  color: primaryColor,
+                  textColor: Colors.white,
+                  flex: 3,
                 ),
               ],
             ),

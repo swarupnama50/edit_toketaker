@@ -2943,6 +2943,10 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
     );
 
     if (confirmed != true || !mounted) return;
+    // Drop focus BEFORE the focus nodes are disposed.
+    hideKeyboard();
+    _customKbVisible.value = false;
+    _kbAmountMode.value = false;
 
     // Cancel any pending auto-save.
     _workingSaveTimer?.cancel();
@@ -3005,6 +3009,8 @@ class _FirstScreenState extends State<FirstScreen> with WidgetsBindingObserver {
 
     // Save the fresh state so reopening the app keeps it blank.
     await _saveWorkingState();
+    _customKbVisible.value = false;
+    _kbAmountMode.value = false;
 
     if (!mounted) return;
 
